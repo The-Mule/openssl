@@ -10,7 +10,6 @@
 #
 # OpenSSL external testing using the pkcs11-provider
 #
-#set -e
 
 PWD="$(pwd)"
 
@@ -51,8 +50,8 @@ echo "------------------------------------------------------------------"
 echo "Building pkcs11-provider"
 echo "------------------------------------------------------------------"
 
-PKG_CONFIG_PATH="$BLDTOP" meson setup $PKCS11_PROVIDER_BUILDDIR $OPENSSL_ROOT_DIR/pkcs11-provider/
-meson compile -C $PKCS11_PROVIDER_BUILDDIR pkcs11
+PKG_CONFIG_PATH="$BLDTOP" meson setup $PKCS11_PROVIDER_BUILDDIR $OPENSSL_ROOT_DIR/pkcs11-provider/ || exit 1
+meson compile -C $PKCS11_PROVIDER_BUILDDIR pkcs11 || exit 1
 
 echo "------------------------------------------------------------------"
 echo "Running tests"
@@ -60,7 +59,12 @@ echo "------------------------------------------------------------------"
 
 # The OpenSSL app uses ${HARNESS_OSSL_PREFIX} as a prefix for its standard output
 HARNESS_OSSL_PREFIX= meson test -C $PKCS11_PROVIDER_BUILDDIR
-cat /home/runner/work/openssl/openssl/pkcs11-provider/builddir/meson-logs/testlog.txt
+
+if [ $? -ne 0 ]; then
+    cat $PKCS11_PROVIDER_BUILDDIR/meson-logs/testlog.txt
+    exit 1
+fi
+
 rm -rf $PKCS11_PROVIDER_BUILDDIR
 
 exit 0

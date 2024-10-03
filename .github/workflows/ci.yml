@@ -611,7 +611,7 @@ jobs:
     - name: package installs
       run: |
         sudo apt-get update
-        sudo apt-get -yq install meson pkg-config gnutls-bin libnss3 libnss3-tools libnss3-dev libsofthsm2 p11-kit-modules opensc expect
+        sudo apt-get -yq install meson pkg-config gnutls-bin libnss3-tools libnss3-dev libsofthsm2 opensc expect
     - name: config
       run: ./config --banner=Configured --strict-warnings --debug enable-external-tests && perl configdata.pm --dump
     - name: make
@@ -621,9 +621,7 @@ jobs:
         cat /proc/cpuinfo
         ./util/opensslwrap.sh version -c
     - name: test external pkcs11-provider
-      run: |
-        make test TESTS="test_external_pkcs11_provider" VERBOSE=1
-        cat /home/runner/work/openssl/openssl/pkcs11-provider/builddir/meson-logs/testlog.txt
+      run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
 
   external-test-pyca:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'ubuntu-22.04-self-hosted' }}
