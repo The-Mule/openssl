@@ -60,6 +60,7 @@ echo "------------------------------------------------------------------"
 
 # The OpenSSL app uses ${HARNESS_OSSL_PREFIX} as a prefix for its standard output
 HARNESS_OSSL_PREFIX= meson test -C $PKCS11_PROVIDER_BUILDDIR
+cat /home/runner/work/openssl/openssl/pkcs11-provider/builddir/meson-logs/testlog.txt
 rm -rf $PKCS11_PROVIDER_BUILDDIR
 
 exit 0
