@@ -573,7 +573,7 @@ jobs:
     - name: package installs
       run: |
         sudo apt-get update
-        sudo apt-get -yq install bison gettext keyutils ldap-utils libldap2-dev libkeyutils-dev python3 python3-paste python3-pyrad slapd tcsh python3-virtualenv virtualenv python3-kdcproxy gdb meson pkg-config gnutls-bin libnss3-tools libnss3-dev softhsm p11-kit opensc
+        sudo apt-get -yq install bison gettext keyutils ldap-utils libldap2-dev libkeyutils-dev python3 python3-paste python3-pyrad slapd tcsh python3-virtualenv virtualenv python3-kdcproxy gdb
     - name: install cpanm and Test2::V0 for gost_engine testing
       uses: perl-actions/install-with-cpanm@stable
       with:
@@ -596,13 +596,34 @@ jobs:
       run: make test TESTS="test_external_tlsfuzzer"
     - name: test external oqs-provider
       run: make test TESTS="test_external_oqsprovider"
-    - name: test external pkcs11-provider
-      run: make test TESTS="test_external_pkcs11_provider"
     - name: test ability to produce debuginfo files
       run: |
         make debuginfo
         gdb < <(echo -e "file ./libcrypto.so.3\nquit") > ./results
         grep -q "Reading symbols from.*libcrypto\.so\.3\.debug" results
+
+  external-test-pkcs11-provider:
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'ubuntu-22.04-self-hosted' }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: package installs
+      run: |
+        sudo apt-get update
+        sudo apt-get -yq install meson pkg-config gnutls-bin libnss3-tools libnss3-dev softhsm p11-kit opensc
+    - name: config
+      run: ./config --banner=Configured --strict-warnings --debug enable-external-tests && perl configdata.pm --dump
+    - name: make
+      run: make -s -j4
+    - name: get cpu info
+      run: |
+        cat /proc/cpuinfo
+        ./util/opensslwrap.sh version -c
+    - name: test external pkcs11-provider
+      run: |
+        make test TESTS="test_external_pkcs11_provider" VERBOSE=1
+        cat /home/runner/work/openssl/openssl/pkcs11-provider/builddir/meson-logs/testlog.txt
 
   external-test-pyca:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'ubuntu-22.04-self-hosted' }}

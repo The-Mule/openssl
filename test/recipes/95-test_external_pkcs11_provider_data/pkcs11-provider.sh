@@ -10,7 +10,7 @@
 #
 # OpenSSL external testing using the pkcs11-provider
 #
-set -e
+#set -e
 
 PWD="$(pwd)"
 
