@@ -58,7 +58,7 @@ echo "------------------------------------------------------------------"
 
 KRYOPTIC_BUILDDIR=$PKCS11_PROVIDER_BUILDDIR/kryoptic
 git clone https://github.com/latchset/kryoptic.git $KRYOPTIC_BUILDDIR
-pushd $KRYOPTIC_BUIDDIR
+pushd $KRYOPTIC_BUILDDIR
 cargo build --features dynamic,standard,nssdb
 popd
 export KRYOPTIC=$KRYOPTIC_BUILDDIR
