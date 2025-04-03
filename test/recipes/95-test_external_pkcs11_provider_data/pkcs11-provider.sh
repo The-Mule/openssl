@@ -44,14 +44,24 @@ echo "   OPENSSL_ROOT_DIR:   $OPENSSL_ROOT_DIR"
 echo "   OpenSSL version:    $OPENSSL_VERSION"
 echo "------------------------------------------------------------------"
 
-PKCS11_PROVIDER_BUILDDIR=$OPENSSL_ROOT_DIR/pkcs11-provider/builddir
-
 echo "------------------------------------------------------------------"
 echo "Building pkcs11-provider"
 echo "------------------------------------------------------------------"
 
+PKCS11_PROVIDER_BUILDDIR=$OPENSSL_ROOT_DIR/pkcs11-provider/builddir
 PKG_CONFIG_PATH="$BLDTOP" meson setup $PKCS11_PROVIDER_BUILDDIR $OPENSSL_ROOT_DIR/pkcs11-provider/ || exit 1
 meson compile -C $PKCS11_PROVIDER_BUILDDIR pkcs11 || exit 1
+
+echo "------------------------------------------------------------------"
+echo "Building kryoptic"
+echo "------------------------------------------------------------------"
+
+KRYOPTIC_BUILDDIR=$PKCS11_PROVIDER_BUILDDIR/kryoptic
+git clone https://github.com/latchset/kryoptic.git $KRYOPTIC_BUILDDIR
+pushd $KRYOPTIC_BUIDDIR
+cargo build --features dynamic,standard,nssdb
+popd
+export KRYOPTIC=$KRYOPTIC_BUILDDIR
 
 echo "------------------------------------------------------------------"
 echo "Running tests"
