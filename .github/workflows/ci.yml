@@ -671,7 +671,7 @@ jobs:
       run: |
         dnf -y install clang meson cargo expect pkgconf-pkg-config opensc \
               p11-kit-devel gcc g++ sqlite-devel python3-six which cmake \
-              nss-tools kryoptic
+              nss-tools kryoptic perl
     - name: config
       run: ./config --strict-warnings --banner=Configured --debug enable-external-tests && perl configdata.pm --dump
     - name: make
