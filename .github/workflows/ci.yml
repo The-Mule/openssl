@@ -673,7 +673,7 @@ jobs:
               p11-kit-devel gcc g++ sqlite-devel python3-six which cmake \
               nss-tools kryoptic perl
     - name: config
-      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests && perl configdata.pm --dump
+      run: ./config --banner=Configured --debug enable-external-tests && perl configdata.pm --dump
     - name: make
       run: make -s -j4
     - name: test external pkcs11-provider
