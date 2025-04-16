@@ -665,8 +665,8 @@ jobs:
     container: fedora:latest
     steps:
     - uses: actions/checkout@v4
-      #      with:
-      #  submodules: recursive
+      with:
+        submodules: recursive
     - name: package installs
       run: |
         dnf -y install clang meson cargo expect pkgconf-pkg-config opensc \
