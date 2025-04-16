@@ -665,8 +665,6 @@ jobs:
     container: fedora:latest
     steps:
     - uses: actions/checkout@v4
-      with:
-        submodules: recursive
     - name: package installs
       run: |
         dnf -y install clang meson cargo expect pkgconf-pkg-config opensc \
@@ -676,6 +674,8 @@ jobs:
       run: ./config --banner=Configured --debug enable-external-tests && perl configdata.pm --dump
     - name: make
       run: make -s -j4
+    - name: checkout pkcs11-provider submodule
+      run: git submodule update --init --depth 1 pkcs11-provider
     - name: test external pkcs11-provider
       run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
 
