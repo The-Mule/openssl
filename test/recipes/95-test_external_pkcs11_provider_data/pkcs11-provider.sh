@@ -66,6 +66,7 @@ echo "------------------------------------------------------------------"
 # The OpenSSL app uses ${HARNESS_OSSL_PREFIX} as a prefix for its standard output
 HARNESS_OSSL_PREFIX= meson test -C $PKCS11_PROVIDER_BUILDDIR --suite=kryoptic --suite=kryoptic.nss
 
+cat $PKCS11_PROVIDER_BUILDDIR/meson-logs/testlog.txt
 if [ $? -ne 0 ]; then
     cat $PKCS11_PROVIDER_BUILDDIR/meson-logs/testlog.txt
     exit 1
