@@ -662,23 +662,23 @@ jobs:
 
   external-tests-pkcs11-provider:
     runs-on: ubuntu-latest
-      #    container: fedora:latest
+    container: fedora:latest
     steps:
-      #    - name: package installs
-      #      run: |
-      #        dnf install -y kryoptic perl git
-      #        #        dnf -y install clang meson cargo expect pkgconf-pkg-config opensc \
-      #        #              p11-kit-devel gcc g++ sqlite-devel python3-six which cmake \
-      #        #              nss-tools kryoptic perl git
+    - name: package installs
+      run: |
+        dnf install -y kryoptic perl git
+        #        dnf -y install clang meson cargo expect pkgconf-pkg-config opensc \
+        #              p11-kit-devel gcc g++ sqlite-devel python3-six which cmake \
+        #              nss-tools kryoptic perl git
     - uses: actions/checkout@v4
-    - name: Checkout submodules
-      run: git submodule update --init --depth 1 pkcs11-provider
+      with:
+        submodules: true  
     - name: config
       run: ./config --banner=Configured --debug enable-external-tests && perl configdata.pm --dump
     - name: make
       run: make -s -j4
-        #    - name: test external pkcs11-provider
-        #      run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
+    - name: test external pkcs11-provider
+      run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
 
         #  external-tests-pyca:
         #    runs-on: ubuntu-latest
