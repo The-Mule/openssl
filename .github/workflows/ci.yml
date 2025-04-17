@@ -672,7 +672,10 @@ jobs:
         #              nss-tools kryoptic perl git
     - uses: actions/checkout@v4
     - name: checkout pkcs11-provider submodule
-      run: git submodule update --init --depth 1 openssl/pkcs11-provider
+      run: |
+        git submodule sync --recursive
+        git -c protocol.version=2 submodule update --init --force --depth=1 --recursive
+  #git submodule update --init --depth 1 openssl/pkcs11-provider
     - name: config
       run: ./config --banner=Configured --debug enable-external-tests && perl configdata.pm --dump
     - name: make
