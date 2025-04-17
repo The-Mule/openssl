@@ -666,7 +666,7 @@ jobs:
     steps:
     - name: package installs
       run: |
-        dnf install -y kryoptic perl git meson opensc
+        dnf install -y kryoptic perl git meson opensc expect
         #        dnf -y install clang meson cargo expect pkgconf-pkg-config opensc \
         #              p11-kit-devel gcc g++ sqlite-devel python3-six which cmake \
         #              nss-tools kryoptic perl git
