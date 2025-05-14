@@ -268,14 +268,14 @@ jobs:
     steps:
     - name: package installs
       run: |
-        dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy
+        dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy make cmake g++
     - uses: actions/checkout@v4
     - name: checkout fuzz/corpora submodule
       run: |
         git config --global --add safe.directory /__w/openssl/openssl
         git submodule update --init --depth 1 fuzz/corpora
     - name: config
-      run: CC=clang ./config --strict-warnings --banner=Configured enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
+      run: ./config --strict-warnings --banner=Configured enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
     - name: make
       run: make -s -j4
     - name: get cpu info
