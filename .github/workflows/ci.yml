@@ -271,7 +271,9 @@ jobs:
         dnf install -y git # kryoptic perl git meson opensc expect
     - uses: actions/checkout@v4
     - name: checkout fuzz/corpora submodule
-      run: git submodule update --init --depth 1 fuzz/corpora
+      run: |
+        git config --global --add safe.directory /__w/openssl/openssl
+        git submodule update --init --depth 1 fuzz/corpora
     - name: config
       run: CC=clang ./config --strict-warnings --banner=Configured enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
     - name: make
