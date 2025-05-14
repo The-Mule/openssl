@@ -268,7 +268,7 @@ jobs:
     steps:
     - name: package installs
       run: |
-        dnf install -y git perl-Find-Bin # kryoptic perl git meson opensc expect
+        dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy
     - uses: actions/checkout@v4
     - name: checkout fuzz/corpora submodule
       run: |
