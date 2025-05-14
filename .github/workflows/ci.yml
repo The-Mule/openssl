@@ -267,6 +267,9 @@ jobs:
     container: fedora:latest
     steps:
     - uses: actions/checkout@v4
+    - name: package installs
+      run: |
+        dnf install -y git # kryoptic perl git meson opensc expect
     - name: checkout fuzz/corpora submodule
       run: git submodule update --init --depth 1 fuzz/corpora
     - name: config
