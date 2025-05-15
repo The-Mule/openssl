@@ -269,7 +269,7 @@ jobs:
     - name: package installs
       run: |
         dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-Test-Simple \
-          perl-Test-Harness make cmake g++ 
+          perl-Test-Harness perl-Time-Piece python3 make cmake g++ 
     - uses: actions/checkout@v4
     - name: checkout fuzz/corpora submodule
       run: |
