@@ -271,10 +271,6 @@ jobs:
         dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-Test-Simple \
           perl-Test-Harness perl-Time-Piece python3 make cmake g++ perl git meson opensc expect
     - uses: actions/checkout@v4
-    - name: get cpu info
-      run: |
-        cat /proc/cpuinfo
-        ./util/opensslwrap.sh version -c
     - name: checkout fuzz/corpora and pkcs11-provider submodule
       run: |
         git config --global --add safe.directory /__w/openssl/openssl
