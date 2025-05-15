@@ -268,8 +268,7 @@ jobs:
     steps:
     - name: package installs
       run: |
-        dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-Test-Simple \
-          perl-Test-Harness perl-Time-Piece python3 make cmake g++ perl git meson opensc expect
+        dnf install -y git perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-Test-Simple perl-Test-Harness perl-Time-Piece python3 make cmake g++ perl git meson opensc expect
     - uses: actions/checkout@v4
     - name: checkout fuzz/corpora and pkcs11-provider submodule
       run: |
@@ -277,8 +276,7 @@ jobs:
         git submodule update --init --depth 1 fuzz/corpora
         git submodule update --init --depth 1 pkcs11-provider
     - name: config
-      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests enable-demos \
-              enable-h3demo no-shared no-fips && perl configdata.pm --dump
+      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
     - name: make
       run: make -s -j4
     - name: get cpu info
