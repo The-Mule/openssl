@@ -276,7 +276,7 @@ jobs:
         git submodule update --init --depth 1 fuzz/corpora
         git submodule update --init --depth 1 pkcs11-provider
     - name: config
-      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
+      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests no-fips && perl configdata.pm --dump
     - name: make
       run: make -s -j4
     - name: get cpu info
