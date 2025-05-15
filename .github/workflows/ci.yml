@@ -276,17 +276,19 @@ jobs:
         git submodule update --init --depth 1 fuzz/corpora
         git submodule update --init --depth 1 pkcs11-provider
     - name: config
-      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests no-fips && perl configdata.pm --dump
+      run: ./config --strict-warnings --banner=Configured enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
     - name: make
       run: make -s -j4
-    - name: get cpu info
-      run: |
-        cat /proc/cpuinfo
-        ./util/opensslwrap.sh version -c
+    - name: re-config
+      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests no-fips && perl configdata.pm --dump
     - name: make test
       run: .github/workflows/make-test
     - name: test external pkcs11-provider
       run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
+    - name: get cpu info
+      run: |
+        cat /proc/cpuinfo
+        ./util/opensslwrap.sh version -c
 
           #  no-shared-macos:
           #    strategy:
