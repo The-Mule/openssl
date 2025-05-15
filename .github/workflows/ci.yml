@@ -279,10 +279,10 @@ jobs:
       run: ./config --strict-warnings --banner=Configured enable-demos enable-h3demo no-shared no-fips && perl configdata.pm --dump
     - name: make
       run: make -s -j4
-    - name: re-config
-      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests no-fips && perl configdata.pm --dump
     - name: make test
       run: .github/workflows/make-test
+    - name: re-config
+      run: ./config --strict-warnings --banner=Configured --debug enable-external-tests no-fips && perl configdata.pm --dump
     - name: test external pkcs11-provider
       run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
     - name: get cpu info
