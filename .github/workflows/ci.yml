@@ -281,7 +281,6 @@ jobs:
       run: make -s -j4
     - name: make test
       run: make test TESTS="-test_external"
-      run: .github/workflows/make-test
     - name: test external pkcs11-provider
       run: make test TESTS="test_external_pkcs11_provider" VERBOSE=1
     - name: get cpu info
