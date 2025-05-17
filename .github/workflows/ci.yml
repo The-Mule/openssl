@@ -268,7 +268,7 @@ jobs:
     steps:
     - name: package installs
       run: |
-        dnf install -y perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-Test-Simple perl-Test-Harness perl-Time-Piece python3 make cmake g++ perl git meson opensc expect kryoptic
+        dnf install -y perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy perl-Test-Simple perl-Test-Harness python3 make g++ perl git meson opensc expect kryoptic
     - uses: actions/checkout@v4
     - name: checkout fuzz/corpora and pkcs11-provider submodule
       run: |
