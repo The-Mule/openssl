@@ -264,7 +264,7 @@ jobs:
 
   external-tests-pkcs11-provider:
     runs-on: ubuntu-latest
-    container: fedora:rawhide
+    container: fedora:latest
     steps:
     - name: package installs
       run: |
