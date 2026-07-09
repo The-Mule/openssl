@@ -33,7 +33,8 @@ my $proxy = TLSProxy::Proxy->new(
     undef,
     cmdstr(app(["openssl"]), display => 1),
     srctop_file("apps", "server.pem"),
-    (!$ENV{HARNESS_ACTIVE} || $ENV{HARNESS_VERBOSE})
+    (!$ENV{HARNESS_ACTIVE} || $ENV{HARNESS_VERBOSE}),
+    have_IPv6()
 );
 
 use constant {
@@ -87,7 +88,7 @@ SKIP: {
 
 SKIP: {
     skip "TLS <= 1.2 disabled", 2
-        if alldisabled(("ssl3", "tls1", "tls1_1", "tls1_2"));
+        if alldisabled(("tls1", "tls1_1", "tls1_2"));
 
     #Test 3: Corrupting a CertVerify signature in <=TLSv1.2 should fail
     $proxy->clear();

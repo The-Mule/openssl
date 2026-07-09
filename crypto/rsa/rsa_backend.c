@@ -28,9 +28,9 @@
 #include "rsa_local.h"
 
 /*
- * The intention with the "backend" source file is to offer backend support
- * for legacy backends (EVP_PKEY_ASN1_METHOD and EVP_PKEY_METHOD) and provider
- * implementations alike.
+ * The intention with the "backend" source file is to offer backend functions
+ * for legacy backends (EVP_PKEY_ASN1_METHOD) and provider implementations
+ * alike.
  */
 
 DEFINE_STACK_OF(BIGNUM)
@@ -64,9 +64,8 @@ static int collect_numbers(STACK_OF(BIGNUM) *numbers,
 int ossl_rsa_fromdata(RSA *rsa, const OSSL_PARAM params[], int include_private)
 {
     const OSSL_PARAM *param_n, *param_e, *param_d = NULL;
-    const OSSL_PARAM *param_p, *param_q = NULL;
     const OSSL_PARAM *param_derive = NULL;
-    BIGNUM *p = NULL, *q = NULL, *n = NULL, *e = NULL, *d = NULL;
+    BIGNUM *n = NULL, *e = NULL, *d = NULL;
     STACK_OF(BIGNUM) *factors = NULL, *exps = NULL, *coeffs = NULL;
     int is_private = 0;
     int derive_from_pq = 0;
@@ -104,10 +103,8 @@ int ossl_rsa_fromdata(RSA *rsa, const OSSL_PARAM params[], int include_private)
                 goto err;
 
             /* we need at minimum p, q */
-            param_p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_RSA_FACTOR1);
-            param_q = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_RSA_FACTOR2);
-            if ((param_p == NULL || !OSSL_PARAM_get_BN(param_p, &p))
-                || (param_q == NULL || !OSSL_PARAM_get_BN(param_q, &q))) {
+            if (OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_RSA_FACTOR1) == NULL
+                || OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_RSA_FACTOR2) == NULL) {
                 ERR_raise(ERR_LIB_RSA, ERR_R_PASSED_NULL_PARAMETER);
                 goto err;
             }
@@ -230,12 +227,10 @@ int ossl_rsa_fromdata(RSA *rsa, const OSSL_PARAM params[], int include_private)
 
     if (!ossl_rsa_check_factors(rsa)) {
         ERR_raise_data(ERR_LIB_RSA, RSA_R_INVALID_KEYPAIR,
-            "RSA factors/exponents are too big for for n-modulus\n");
+            "RSA factors/exponents are too big for n-modulus\n");
         goto err;
     }
 
-    BN_clear_free(p);
-    BN_clear_free(q);
     sk_BIGNUM_free(factors);
     sk_BIGNUM_free(exps);
     sk_BIGNUM_free(coeffs);
@@ -537,7 +532,8 @@ RSA *ossl_rsa_dup(const RSA *rsa, int selection)
     }
 
     if (rsa->pss != NULL) {
-        dupkey->pss = RSA_PSS_PARAMS_dup(rsa->pss);
+        if ((dupkey->pss = RSA_PSS_PARAMS_dup(rsa->pss)) == NULL)
+            goto err;
         if (rsa->pss->maskGenAlgorithm != NULL
             && dupkey->pss->maskGenAlgorithm == NULL) {
             dupkey->pss->maskHash = ossl_x509_algor_mgf1_decode(rsa->pss->maskGenAlgorithm);

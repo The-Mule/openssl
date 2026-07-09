@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -32,6 +32,7 @@
 #include "prov/provider_ctx.h"
 #include "prov/der_rsa.h"
 #include "prov/securitycheck.h"
+#include "internal/fips.h"
 
 #define rsa_set_ctx_params_no_digest_st rsa_set_ctx_params_st
 
@@ -236,6 +237,12 @@ static void *rsa_newctx(void *provctx, const char *propq)
     if (!ossl_prov_is_running())
         return NULL;
 
+#ifdef FIPS_MODULE
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(provctx),
+            ST_ID_SIG_RSA_SHA256))
+        return NULL;
+#endif
+
     if ((prsactx = OPENSSL_zalloc(sizeof(PROV_RSA_CTX))) == NULL
         || (propq != NULL
             && (propq_copy = OPENSSL_strdup(propq)) == NULL)) {
@@ -417,7 +424,7 @@ static int rsa_setup_md(PROV_RSA_CTX *ctx, const char *mdname,
                     OSSL_FIPS_IND_SETTABLE1,
                     ctx->libctx,
                     md_nid, sha1_allowed, 1, desc,
-                    ossl_fips_config_signature_digest_check))
+                    FIPS_CONFIG_SIGNATURE_DIGEST_CHECK))
                 goto err;
         }
 #endif
@@ -595,7 +602,7 @@ rsa_signverify_init(PROV_RSA_CTX *prsactx, void *vrsa,
 
         break;
     default:
-        ERR_raise(ERR_LIB_RSA, PROV_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE);
+        ERR_raise(ERR_LIB_PROV, PROV_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE);
         return 0;
     }
 
@@ -649,7 +656,7 @@ static int rsa_pss_saltlen_check_passed(PROV_RSA_CTX *ctx, const char *algoname,
         if (!OSSL_FIPS_IND_ON_UNAPPROVED(ctx, OSSL_FIPS_IND_SETTABLE3,
                 ctx->libctx,
                 algoname, "PSS Salt Length",
-                ossl_fips_config_rsa_pss_saltlen_check)) {
+                FIPS_CONFIG_RSA_PSS_SALTLEN_CHECK)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_SALT_LENGTH);
             return 0;
         }
@@ -981,8 +988,19 @@ static int rsa_verify_recover(void *vprsactx,
             break;
 
         case RSA_PKCS1_PADDING: {
+            int mdsize = EVP_MD_get_size(prsactx->md);
             size_t sltmp;
 
+            if (mdsize <= 0) {
+                ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_DIGEST_LENGTH);
+                return 0;
+            }
+            if (routsize < (size_t)mdsize) {
+                ERR_raise_data(ERR_LIB_PROV, PROV_R_OUTPUT_BUFFER_TOO_SMALL,
+                    "buffer size is %d, should be %d",
+                    routsize, mdsize);
+                return 0;
+            }
             ret = ossl_rsa_verify(prsactx->mdnid, NULL, 0, rout, &sltmp,
                 sig, siglen, prsactx->rsa);
             if (ret <= 0) {
@@ -998,6 +1016,14 @@ static int rsa_verify_recover(void *vprsactx,
             return 0;
         }
     } else {
+        int rsasize = RSA_size(prsactx->rsa);
+
+        if (routsize < (size_t)rsasize) {
+            ERR_raise_data(ERR_LIB_PROV, PROV_R_OUTPUT_BUFFER_TOO_SMALL,
+                "buffer size is %d, should be %d",
+                routsize, rsasize);
+            return 0;
+        }
         ret = RSA_public_decrypt((int)siglen, sig, rout, prsactx->rsa,
             prsactx->pad_mode);
         if (ret <= 0) {
@@ -1347,6 +1373,7 @@ static void *rsa_dupctx(void *vprsactx)
     dstctx->mdctx = NULL;
     dstctx->tbuf = NULL;
     dstctx->propq = NULL;
+    dstctx->sig = NULL;
 
     if (srcctx->rsa != NULL && !RSA_up_ref(srcctx->rsa))
         goto err;
@@ -1370,6 +1397,12 @@ static void *rsa_dupctx(void *vprsactx)
     if (srcctx->propq != NULL) {
         dstctx->propq = OPENSSL_strdup(srcctx->propq);
         if (dstctx->propq == NULL)
+            goto err;
+    }
+
+    if (srcctx->sig != NULL) {
+        dstctx->sig = OPENSSL_memdup(srcctx->sig, srcctx->siglen);
+        if (dstctx->sig == NULL)
             goto err;
     }
 
@@ -1490,7 +1523,7 @@ static int rsa_x931_padding_allowed(PROV_RSA_CTX *ctx)
         if (!OSSL_FIPS_IND_ON_UNAPPROVED(ctx, OSSL_FIPS_IND_SETTABLE2,
                 ctx->libctx,
                 "RSA Sign set ctx", "X931 Padding",
-                ossl_fips_config_rsa_sign_x931_disallowed)) {
+                FIPS_CONFIG_RSA_SIGN_X931_PAD_DISABLED)) {
             ERR_raise(ERR_LIB_PROV,
                 PROV_R_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE);
             return 0;
@@ -1506,6 +1539,7 @@ static int rsa_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
     struct rsa_set_ctx_params_st p;
     int pad_mode;
     int saltlen;
+    int count = 0;
     char mdname[OSSL_MAX_NAME_SIZE] = "", *pmdname = NULL;
     char mdprops[OSSL_MAX_PROPQUERY_SIZE] = "", *pmdprops = NULL;
     char mgf1mdname[OSSL_MAX_NAME_SIZE] = "", *pmgf1mdname = NULL;
@@ -1518,12 +1552,14 @@ static int rsa_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
         return 1;
 
     if (prsactx->flag_allow_md) {
-        if (!rsa_set_ctx_params_decoder(params, &p))
+        if (!rsa_set_ctx_params_decoder(params, &p, &count))
             return 0;
     } else {
-        if (!rsa_set_ctx_params_no_digest_decoder(params, &p))
+        if (!rsa_set_ctx_params_no_digest_decoder(params, &p, &count))
             return 0;
     }
+    if (count == 0)
+        return 1;
 
     if (!OSSL_FIPS_IND_SET_CTX_FROM_PARAM(prsactx, OSSL_FIPS_IND_SETTABLE0,
             p.ind_k))
@@ -1867,7 +1903,7 @@ static int rsa_sigalg_signverify_init(void *vprsactx, void *vrsa,
 
     /* PSS is currently not supported as a sigalg */
     if (prsactx->pad_mode == RSA_PKCS1_PSS_PADDING) {
-        ERR_raise(ERR_LIB_RSA, PROV_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE);
+        ERR_raise(ERR_LIB_PROV, PROV_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE);
         return 0;
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -45,14 +45,7 @@
 #endif
 #include "rcu_internal.h"
 
-#if defined(__clang__) && defined(__has_feature)
-#if __has_feature(thread_sanitizer)
-#define __SANITIZE_THREAD__
-#endif
-#endif
-
 #if defined(__SANITIZE_THREAD__)
-#include <sanitizer/tsan_interface.h>
 #define TSAN_FAKE_UNLOCK(x)          \
     __tsan_mutex_pre_unlock((x), 0); \
     __tsan_mutex_post_unlock((x), 0)
@@ -60,25 +53,18 @@
 #define TSAN_FAKE_LOCK(x)          \
     __tsan_mutex_pre_lock((x), 0); \
     __tsan_mutex_post_lock((x), 0, 0)
+
+#define TSAN_LOAD_MEM_ORDER __ATOMIC_ACQUIRE
+#define TSAN_STORE_MEM_ORDER __ATOMIC_RELEASE
 #else
 #define TSAN_FAKE_UNLOCK(x)
 #define TSAN_FAKE_LOCK(x)
+#define TSAN_LOAD_MEM_ORDER __ATOMIC_RELAXED
+#define TSAN_STORE_MEM_ORDER __ATOMIC_RELAXED
 #endif
 
 #if defined(__sun)
 #include <atomic.h>
-#endif
-
-#if defined(__apple_build_version__) && __apple_build_version__ < 6000000
-/*
- * OS/X 10.7 and 10.8 had a weird version of clang which has __ATOMIC_ACQUIRE and
- * __ATOMIC_ACQ_REL but which expects only one parameter for __atomic_is_lock_free()
- * rather than two which has signature __atomic_is_lock_free(sizeof(_Atomic(T))).
- * All of this makes impossible to use __atomic_is_lock_free here.
- *
- * See: https://github.com/llvm/llvm-project/commit/a4c2602b714e6c6edb98164550a5ae829b2de760
- */
-#define BROKEN_CLANG_ATOMICS
 #endif
 
 #if defined(OPENSSL_THREADS) && !defined(CRYPTO_TDEBUG) && !defined(OPENSSL_SYS_WINDOWS)
@@ -95,7 +81,7 @@
  * implementation
  * Likewise is there a problem with the glibc implementation on riscv.
  */
-#if defined(PTHREAD_RWLOCK_INITIALIZER) && !defined(_KLT_MODEL_) \
+#if defined(PTHREAD_RWLOCK_INITIALIZER) && !defined(_KLT_MODEL_) && !defined(_PUT_MODEL_) \
     && !defined(__riscv)
 #define USE_RWLOCK
 #endif
@@ -124,8 +110,7 @@
  */
 typedef void *pvoid;
 
-#if defined(__GNUC__) && defined(__ATOMIC_ACQUIRE) && !defined(BROKEN_CLANG_ATOMICS) \
-    && !defined(USE_ATOMIC_FALLBACKS)
+#if defined(OSSL_USE_GCC_ATOMICS)
 #define ATOMIC_LOAD_N(t, p, o) __atomic_load_n(p, o)
 #define ATOMIC_STORE_N(t, p, v, o) __atomic_store_n(p, v, o)
 #define ATOMIC_STORE(t, p, v, o) __atomic_store(p, v, o)
@@ -537,24 +522,27 @@ void ossl_synchronize_rcu(CRYPTO_RCU_LOCK *lock)
     }
 }
 
+CRYPTO_RCU_CB_ITEM *ossl_rcu_cb_item_new(void)
+{
+    return OPENSSL_zalloc(sizeof(CRYPTO_RCU_CB_ITEM));
+}
+
+void ossl_rcu_cb_item_free(CRYPTO_RCU_CB_ITEM *item)
+{
+    OPENSSL_free(item);
+}
+
 /*
  * Note: This call assumes its made under the protection of
  * ossl_rcu_write_lock
  */
-int ossl_rcu_call(CRYPTO_RCU_LOCK *lock, rcu_cb_fn cb, void *data)
+void ossl_rcu_call(CRYPTO_RCU_LOCK *lock, CRYPTO_RCU_CB_ITEM *item,
+    rcu_cb_fn cb, void *data)
 {
-    struct rcu_cb_item *new = OPENSSL_zalloc(sizeof(*new));
-
-    if (new == NULL)
-        return 0;
-
-    new->data = data;
-    new->fn = cb;
-
-    new->next = lock->cb_items;
-    lock->cb_items = new;
-
-    return 1;
+    item->fn = cb;
+    item->data = data;
+    item->next = lock->cb_items;
+    lock->cb_items = item;
 }
 
 void *ossl_rcu_uptr_deref(void **p)
@@ -570,6 +558,9 @@ void ossl_rcu_assign_uptr(void **p, void **v)
 CRYPTO_RCU_LOCK *ossl_rcu_lock_new(int num_writers, OSSL_LIB_CTX *ctx)
 {
     struct rcu_lock_st *new;
+    pthread_mutex_t *mutexes[3] = { NULL };
+    pthread_cond_t *conds[2] = { NULL };
+    int i;
 
     /*
      * We need a minimum of 2 qp's
@@ -586,19 +577,40 @@ CRYPTO_RCU_LOCK *ossl_rcu_lock_new(int num_writers, OSSL_LIB_CTX *ctx)
         return NULL;
 
     new->ctx = ctx;
-    pthread_mutex_init(&new->write_lock, NULL);
-    pthread_mutex_init(&new->prior_lock, NULL);
-    pthread_mutex_init(&new->alloc_lock, NULL);
-    pthread_cond_init(&new->prior_signal, NULL);
-    pthread_cond_init(&new->alloc_signal, NULL);
-
+    i = 0;
+    mutexes[i] = pthread_mutex_init(&new->write_lock, NULL) == 0 ? &new->write_lock : NULL;
+    if (mutexes[i++] == NULL)
+        goto err;
+    mutexes[i] = pthread_mutex_init(&new->prior_lock, NULL) == 0 ? &new->prior_lock : NULL;
+    if (mutexes[i++] == NULL)
+        goto err;
+    mutexes[i] = pthread_mutex_init(&new->alloc_lock, NULL) == 0 ? &new->alloc_lock : NULL;
+    if (mutexes[i++] == NULL)
+        goto err;
+    conds[i - 3] = pthread_cond_init(&new->prior_signal, NULL) == 0 ? &new->prior_signal : NULL;
+    if (conds[i - 3] == NULL)
+        goto err;
+    i++;
+    conds[i - 3] = pthread_cond_init(&new->alloc_signal, NULL) == 0 ? &new->alloc_signal : NULL;
+    if (conds[i - 3] == NULL)
+        goto err;
+    i++;
     new->qp_group = allocate_new_qp_group(new, num_writers);
-    if (new->qp_group == NULL) {
-        OPENSSL_free(new);
-        new = NULL;
-    }
+    if (new->qp_group == NULL)
+        goto err;
 
     return new;
+
+err:
+    for (i = 0; i < 3; i++)
+        if (mutexes[i] != NULL)
+            pthread_mutex_destroy(mutexes[i]);
+    for (i = 0; i < 2; i++)
+        if (conds[i] != NULL)
+            pthread_cond_destroy(conds[i]);
+    OPENSSL_free(new->qp_group);
+    OPENSSL_free(new);
+    return NULL;
 }
 
 void ossl_rcu_lock_free(CRYPTO_RCU_LOCK *lock)
@@ -612,6 +624,17 @@ void ossl_rcu_lock_free(CRYPTO_RCU_LOCK *lock)
     ossl_synchronize_rcu(rlock);
 
     OPENSSL_free(rlock->qp_group);
+    /*
+     * Some targets (BSD) allocate heap when initializing
+     * a mutex or condition, to prevent leaks, those need
+     * to be destroyed here
+     */
+    pthread_mutex_destroy(&rlock->write_lock);
+    pthread_mutex_destroy(&rlock->prior_lock);
+    pthread_mutex_destroy(&rlock->alloc_lock);
+    pthread_cond_destroy(&rlock->prior_signal);
+    pthread_cond_destroy(&rlock->alloc_signal);
+
     /* There should only be a single qp left now */
     OPENSSL_free(rlock);
 }
@@ -852,6 +875,7 @@ static ossl_inline int ossl_rwlock_unlock(pthread_rwlock_t *lock)
 
 #else /* !REPORT_RWLOCK_CONTENTION */
 
+#if defined(USE_RWLOCK)
 static ossl_inline void ossl_init_rwlock_contention_data(void)
 {
 }
@@ -870,6 +894,7 @@ static ossl_inline int ossl_rwlock_unlock(pthread_rwlock_t *rwlock)
 {
     return pthread_rwlock_unlock(rwlock);
 }
+#endif /* USE_RWLOCK */
 #endif /* REPORT_RWLOCK_CONTENTION */
 
 CRYPTO_RWLOCK *CRYPTO_THREAD_lock_new(void)
@@ -1028,12 +1053,12 @@ int CRYPTO_THREAD_compare_id(CRYPTO_THREAD_ID a, CRYPTO_THREAD_ID b)
 
 int CRYPTO_atomic_add(int *val, int amount, int *ret, CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*val), val)) {
         *ret = __atomic_add_fetch(val, amount, __ATOMIC_ACQ_REL);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (ret != NULL) {
         *ret = atomic_add_int_nv((volatile unsigned int *)val, amount);
@@ -1055,12 +1080,12 @@ int CRYPTO_atomic_add(int *val, int amount, int *ret, CRYPTO_RWLOCK *lock)
 int CRYPTO_atomic_add64(uint64_t *val, uint64_t op, uint64_t *ret,
     CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*val), val)) {
         *ret = __atomic_add_fetch(val, op, __ATOMIC_ACQ_REL);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (ret != NULL) {
         *ret = atomic_add_64_nv(val, op);
@@ -1081,12 +1106,12 @@ int CRYPTO_atomic_add64(uint64_t *val, uint64_t op, uint64_t *ret,
 int CRYPTO_atomic_and(uint64_t *val, uint64_t op, uint64_t *ret,
     CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*val), val)) {
         *ret = __atomic_and_fetch(val, op, __ATOMIC_ACQ_REL);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (ret != NULL) {
         *ret = atomic_and_64_nv(val, op);
@@ -1107,12 +1132,12 @@ int CRYPTO_atomic_and(uint64_t *val, uint64_t op, uint64_t *ret,
 int CRYPTO_atomic_or(uint64_t *val, uint64_t op, uint64_t *ret,
     CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*val), val)) {
         *ret = __atomic_or_fetch(val, op, __ATOMIC_ACQ_REL);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (ret != NULL) {
         *ret = atomic_or_64_nv(val, op);
@@ -1132,12 +1157,12 @@ int CRYPTO_atomic_or(uint64_t *val, uint64_t op, uint64_t *ret,
 
 int CRYPTO_atomic_load(uint64_t *val, uint64_t *ret, CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*val), val)) {
         __atomic_load(val, ret, __ATOMIC_ACQUIRE);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (ret != NULL) {
         *ret = atomic_or_64_nv(val, 0);
@@ -1155,12 +1180,12 @@ int CRYPTO_atomic_load(uint64_t *val, uint64_t *ret, CRYPTO_RWLOCK *lock)
 
 int CRYPTO_atomic_store(uint64_t *dst, uint64_t val, CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*dst), dst)) {
         __atomic_store(dst, &val, __ATOMIC_RELEASE);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (dst != NULL) {
         atomic_swap_64(dst, val);
@@ -1178,12 +1203,12 @@ int CRYPTO_atomic_store(uint64_t *dst, uint64_t val, CRYPTO_RWLOCK *lock)
 
 int CRYPTO_atomic_load_int(int *val, int *ret, CRYPTO_RWLOCK *lock)
 {
-#if defined(__GNUC__) && defined(__ATOMIC_ACQ_REL) && !defined(BROKEN_CLANG_ATOMICS)
+#if defined(OSSL_USE_GCC_ATOMICS)
     if (__atomic_is_lock_free(sizeof(*val), val)) {
         __atomic_load(val, ret, __ATOMIC_ACQUIRE);
         return 1;
     }
-#elif defined(__sun) && (defined(__SunOS_5_10) || defined(__SunOS_5_11))
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
     /* This will work for all future Solaris versions. */
     if (ret != NULL) {
         *ret = (int)atomic_or_uint_nv((unsigned int *)val, 0);
@@ -1197,6 +1222,89 @@ int CRYPTO_atomic_load_int(int *val, int *ret, CRYPTO_RWLOCK *lock)
         return 0;
 
     return 1;
+}
+
+int CRYPTO_atomic_store_int(int *dst, int val, CRYPTO_RWLOCK *lock)
+{
+#if defined(OSSL_USE_GCC_ATOMICS)
+    if (__atomic_is_lock_free(sizeof(*dst), dst)) {
+        __atomic_store(dst, &val, __ATOMIC_RELEASE);
+        return 1;
+    }
+#elif defined(OSSL_USE_SOLARIS_ATOMICS)
+    /* This will work for all future Solaris versions. */
+    if (dst != NULL) {
+        atomic_swap_uint((unsigned int)dst, (unsigned int)val);
+        return 1;
+    }
+#endif
+    if (lock == NULL || !CRYPTO_THREAD_write_lock(lock))
+        return 0;
+    *dst = val;
+    if (!CRYPTO_THREAD_unlock(lock))
+        return 0;
+
+    return 1;
+}
+
+int CRYPTO_atomic_load_ptr(void **ptr, void **ret, CRYPTO_RWLOCK *lock)
+{
+#if defined(__GNUC__) && defined(__ATOMIC_RELAXED) && !defined(BROKEN_CLANG_ATOMICS)
+    *ret = __atomic_load_n(ptr, TSAN_LOAD_MEM_ORDER);
+    return 1;
+#else
+    if (lock == NULL || !CRYPTO_THREAD_read_lock(lock))
+        return 0;
+    *ret = *ptr;
+    if (!CRYPTO_THREAD_unlock(lock))
+        return 0;
+    return 1;
+#endif
+}
+
+int CRYPTO_atomic_store_ptr(void **dst, void **val, CRYPTO_RWLOCK *lock)
+{
+#if defined(__GNUC__) && defined(__ATOMIC_RELAXED) && !defined(BROKEN_CLANG_ATOMICS)
+    __atomic_store(dst, val, TSAN_STORE_MEM_ORDER);
+    return 1;
+#else
+    if (lock == NULL || !CRYPTO_THREAD_write_lock(lock))
+        return 0;
+    *dst = *val;
+    if (!CRYPTO_THREAD_unlock(lock))
+        return 0;
+    return 1;
+#endif
+}
+
+int CRYPTO_atomic_cmp_exch_ptr(void **ptr, void **expect, void *desire, CRYPTO_RWLOCK *lock, int *lock_failed)
+{
+#if defined(__GNUC__) && defined(__ATOMIC_RELAXED) && !defined(BROKEN_CLANG_ATOMICS)
+    if (lock_failed != NULL)
+        *lock_failed = 0;
+    return __atomic_compare_exchange_n(ptr, expect, desire, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED) ? 1 : 0;
+#else
+    int lock_sink;
+    int ret = 0;
+
+    if (lock_failed == NULL)
+        lock_failed = &lock_sink;
+
+    *lock_failed = 0;
+    if (lock == NULL || !CRYPTO_THREAD_write_lock(lock)) {
+        *lock_failed = 1;
+        return 0;
+    }
+    if (*ptr == *expect) {
+        ret = 1;
+        *ptr = desire;
+    } else {
+        *expect = *ptr;
+    }
+    if (!CRYPTO_THREAD_unlock(lock))
+        *lock_failed = 1;
+    return ret;
+#endif
 }
 
 #ifndef FIPS_MODULE

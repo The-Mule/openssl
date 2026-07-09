@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2017-2026 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2017, Oracle and/or its affiliates.  All rights reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -31,6 +31,8 @@
 #endif
 
 DEFINE_LHASH_OF_EX(int);
+
+static void hashtable_intfree(HT_VALUE *v);
 
 static int int_tests[] = { 65537, 13, 1, 3, -5, 6, 7, 4, -10, -12, -14, 22, 9,
     -17, 16, 17, -23, 35, 37, 173, 11 };
@@ -244,6 +246,7 @@ static int test_int_hashtable(int idx)
     /* insert */
     HT_INIT_KEY(&key);
     for (i = 0; i < n_int_tests; i++) {
+        HT_KEY_RESET(&key);
         HT_SET_KEY_FIELD(&key, mykey, int_tests[i]);
         if (!TEST_int_eq(ossl_ht_test_int_insert(ht, TO_HT_KEY(&key),
                              &int_tests[i], NULL),
@@ -280,6 +283,7 @@ static int test_int_hashtable(int idx)
 
     /* delete */
     for (i = 0; i < n_dels; i++) {
+        HT_KEY_RESET(&key);
         HT_SET_KEY_FIELD(&key, mykey, dels[i].data);
         todel = ossl_ht_delete(ht, TO_HT_KEY(&key));
         if (dels[i].should_del) {
@@ -300,6 +304,84 @@ static int test_int_hashtable(int idx)
 end:
     ossl_ht_free(ht);
     return rc;
+}
+
+/*
+ * MFAIL coverage for the RCU replacement branch of ossl_ht_insert_locked.
+ */
+static int test_hashtable_insert_replace_mfail(void)
+{
+    HT_CONFIG hash_conf = {
+        .collision_check = 1,
+        .no_rcu = 0, /* RCU enabled - exercises cbi pre-alloc on replace */
+    };
+    INTKEY key;
+    HT *ht = NULL;
+    int *old = NULL;
+    int ret = 0;
+    static int v1 = 100;
+    static int v2 = 200;
+
+    if (!TEST_ptr(ht = ossl_ht_new(&hash_conf)))
+        goto end;
+
+    /* Seed the table outside MFAIL for later replacement */
+    HT_INIT_KEY(&key);
+    HT_KEY_RESET(&key);
+    HT_SET_KEY_FIELD(&key, mykey, int_tests[0]);
+    if (!TEST_int_eq(ossl_ht_test_int_insert(ht, TO_HT_KEY(&key), &v1, NULL),
+            1))
+        goto end;
+
+    /* Replacement under MFAIL. */
+    MFAIL_start();
+    ret = ossl_ht_test_int_insert(ht, TO_HT_KEY(&key), &v2, &old);
+    MFAIL_end();
+
+end:
+    ossl_ht_free(ht);
+    return ret > 0 ? 1 : 0;
+}
+
+static int test_hashtable_free_mfail(void)
+{
+    HT_CONFIG hash_conf = {
+        .ht_free_fn = hashtable_intfree,
+        .collision_check = 1,
+        .no_rcu = 0,
+    };
+    INTKEY key;
+    HT *ht = NULL;
+    int *p;
+    size_t i;
+
+    if (!TEST_ptr(ht = ossl_ht_new(&hash_conf)))
+        return 0;
+
+    /* Seed values. */
+    HT_INIT_KEY(&key);
+    for (i = 0; i < n_int_tests; i++) {
+        if (!TEST_ptr(p = OPENSSL_malloc(sizeof(*p))))
+            goto end;
+        *p = int_tests[i];
+        HT_KEY_RESET(&key);
+        HT_SET_KEY_FIELD(&key, mykey, *p);
+        if (!TEST_int_eq(ossl_ht_test_int_insert(ht, TO_HT_KEY(&key),
+                             p, NULL),
+                1)) {
+            OPENSSL_free(p);
+            goto end;
+        }
+    }
+    MFAIL_start();
+    ossl_ht_free(ht);
+    MFAIL_end();
+    ht = NULL;
+
+    return 1;
+end:
+    ossl_ht_free(ht);
+    return 0;
 }
 
 static unsigned long int stress_hash(const int *p)
@@ -439,6 +521,7 @@ static int test_hashtable_stress(int idx)
             goto end;
         }
         *p = 3 * i + 1;
+        HT_KEY_RESET(&key);
         HT_SET_KEY_FIELD(&key, mykey, *p);
         if (!TEST_int_eq(ossl_ht_test_int_insert(h, TO_HT_KEY(&key),
                              p, NULL),
@@ -455,6 +538,7 @@ static int test_hashtable_stress(int idx)
     /* delete or get in a different order */
     for (i = 0; i < n; i++) {
         const int j = (7 * i + 4) % n * 3 + 1;
+        HT_KEY_RESET(&key);
         HT_SET_KEY_FIELD(&key, mykey, j);
 
         switch (idx % 2) {
@@ -496,7 +580,35 @@ static HT *m_ht = NULL;
 #define NUM_WORKERS 16
 
 static struct test_mt_entry test_mt_entries[TEST_MT_POOL_SZ];
-static char *worker_exits[NUM_WORKERS];
+static char **worker_exits;
+static thread_t *workers;
+static int num_workers = NUM_WORKERS;
+
+static int setup_num_workers(void)
+{
+    char *harness_jobs = getenv("HARNESS_JOBS");
+    char *lhash_workers = getenv("LHASH_WORKERS");
+    /* If we have HARNESS_JOBS set, don't eat more than a quarter */
+    if (harness_jobs != NULL) {
+        int jobs = atoi(harness_jobs);
+        if (jobs > 0)
+            num_workers = jobs / 4;
+    }
+    /* But if we have explicitly set LHASH_WORKERS use that */
+    if (lhash_workers != NULL) {
+        int jobs = atoi(lhash_workers);
+        if (jobs > 0)
+            num_workers = jobs;
+    }
+
+    TEST_info("using %d workers\n", num_workers);
+
+    free(worker_exits);
+    free(workers);
+    worker_exits = calloc(num_workers, sizeof(*worker_exits));
+    workers = calloc(num_workers, sizeof(*workers));
+    return worker_exits != NULL && workers != NULL;
+}
 
 HT_START_KEY_DEFN(mtkey)
 HT_DEF_KEY_FIELD(index, uint32_t)
@@ -686,15 +798,15 @@ static int test_hashtable_multithread(int idx)
         .no_rcu = idx,
     };
     int ret = 0;
-    thread_t workers[NUM_WORKERS];
     int i;
 #ifdef MEASURE_HASH_PERFORMANCE
     struct timeval start, end, delta;
 #endif
 
-    memset(worker_exits, 0, sizeof(char *) * NUM_WORKERS);
+    if (!TEST_true(setup_num_workers()))
+        goto end;
+
     memset(test_mt_entries, 0, sizeof(TEST_MT_ENTRY) * TEST_MT_POOL_SZ);
-    memset(workers, 0, sizeof(thread_t) * NUM_WORKERS);
 
     m_ht = ossl_ht_new(&hash_conf);
 
@@ -711,13 +823,13 @@ static int test_hashtable_multithread(int idx)
     gettimeofday(&start, NULL);
 #endif
 
-    for (i = 0; i < NUM_WORKERS; i++) {
+    for (i = 0; i < num_workers; i++) {
         if (!run_thread(&workers[i], do_mt_hash_work))
             goto shutdown;
     }
 
 shutdown:
-    for (--i; i >= 0; i--) {
+    for (i = 0; i < num_workers; i++) {
         wait_for_thread(workers[i]);
     }
 
@@ -726,7 +838,7 @@ shutdown:
      * conditions
      */
     ret = 1;
-    for (i = 0; i < NUM_WORKERS; i++) {
+    for (i = 0; i < num_workers; i++) {
         if (worker_exits[i] != NULL) {
             TEST_info("Worker %d failed: %s\n", i, worker_exits[i]);
             ret = 0;
@@ -752,6 +864,10 @@ end_free:
     CRYPTO_THREAD_lock_free(worker_lock);
     CRYPTO_THREAD_lock_free(testrand_lock);
     CRYPTO_THREAD_lock_free(no_rcu_lock);
+    free(workers);
+    workers = NULL;
+    free(worker_exits);
+    worker_exits = NULL;
 end:
     return ret;
 }
@@ -763,5 +879,7 @@ int setup_tests(void)
     ADD_ALL_TESTS(test_int_hashtable, 2);
     ADD_ALL_TESTS(test_hashtable_stress, 4);
     ADD_ALL_TESTS(test_hashtable_multithread, 2);
+    ADD_MFAIL_TEST(test_hashtable_insert_replace_mfail);
+    ADD_MFAIL_NO_CHECK_TEST(test_hashtable_free_mfail);
     return 1;
 }

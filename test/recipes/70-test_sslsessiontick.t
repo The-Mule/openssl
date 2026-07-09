@@ -27,8 +27,8 @@ plan skip_all => "$test_name needs the module feature enabled"
 plan skip_all => "$test_name needs the sock feature enabled"
     if disabled("sock");
 
-plan skip_all => "$test_name needs SSLv3, TLSv1, TLSv1.1 or TLSv1.2 enabled"
-    if alldisabled(("ssl3", "tls1", "tls1_1", "tls1_2"));
+plan skip_all => "$test_name needs TLSv1, TLSv1.1 or TLSv1.2 enabled"
+    if alldisabled(("tls1", "tls1_1", "tls1_2"));
 
 sub checkmessages($$$$$$);
 sub clearclient();
@@ -43,7 +43,8 @@ my $proxy = TLSProxy::Proxy->new(
     undef,
     cmdstr(app(["openssl"]), display => 1),
     srctop_file("apps", "server.pem"),
-    (!$ENV{HARNESS_ACTIVE} || $ENV{HARNESS_VERBOSE})
+    (!$ENV{HARNESS_ACTIVE} || $ENV{HARNESS_VERBOSE}),
+    have_IPv6()
 );
 
 #Test 1: By default with no existing session we should get a session ticket

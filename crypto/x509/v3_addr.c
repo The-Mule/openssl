@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2006-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -417,11 +417,14 @@ static int make_addressPrefix(IPAddressOrRange **result, unsigned char *addr,
     aor->type = IPAddressOrRange_addressPrefix;
     if (aor->u.addressPrefix == NULL && (aor->u.addressPrefix = ASN1_BIT_STRING_new()) == NULL)
         goto err;
-    if (!ASN1_BIT_STRING_set(aor->u.addressPrefix, addr, bytelen))
+    /* BIT_STRING is a typedef of STRING
+     * this function allows to set value without checking invalid bits
+     * as they are nullified after setting */
+    if (!ASN1_STRING_set(aor->u.addressPrefix, addr, bytelen))
         goto err;
     if (bitlen > 0)
         aor->u.addressPrefix->data[bytelen - 1] &= ~(0xFF >> bitlen);
-    ossl_asn1_string_set_bits_left(aor->u.addressPrefix, 8 - bitlen);
+    ossl_asn1_bit_string_set_unused_bits(aor->u.addressPrefix, 8 - bitlen);
 
     *result = aor;
     return 1;
@@ -461,9 +464,8 @@ static int make_addressRange(IPAddressOrRange **result,
 
     for (i = length; i > 0 && min[i - 1] == 0x00; --i)
         ;
-    if (!ASN1_BIT_STRING_set(aor->u.addressRange->min, min, i))
+    if (!ASN1_BIT_STRING_set1(aor->u.addressRange->min, min, i, 0))
         goto err;
-    ossl_asn1_string_set_bits_left(aor->u.addressRange->min, 0);
     if (i > 0) {
         unsigned char b = min[i - 1];
         int j = 1;
@@ -475,9 +477,8 @@ static int make_addressRange(IPAddressOrRange **result,
 
     for (i = length; i > 0 && max[i - 1] == 0xFF; --i)
         ;
-    if (!ASN1_BIT_STRING_set(aor->u.addressRange->max, max, i))
+    if (!ASN1_BIT_STRING_set1(aor->u.addressRange->max, max, i, 0))
         goto err;
-    ossl_asn1_string_set_bits_left(aor->u.addressRange->max, 0);
     if (i > 0) {
         unsigned char b = max[i - 1];
         int j = 1;
@@ -544,7 +545,7 @@ err:
  * Add an inheritance element.
  */
 int X509v3_addr_add_inherit(IPAddrBlocks *addr,
-    const unsigned afi, const unsigned *safi)
+    unsigned afi, const unsigned *safi)
 {
     IPAddressFamily *f = make_IPAddressFamily(addr, afi, safi);
 
@@ -595,7 +596,7 @@ static IPAddressOrRanges *make_prefix_or_range(IPAddrBlocks *addr,
 int X509v3_addr_add_prefix(IPAddrBlocks *addr,
     const unsigned afi,
     const unsigned *safi,
-    unsigned char *a, const int prefixlen)
+    unsigned char *a, int prefixlen)
 {
     IPAddressOrRanges *aors = make_prefix_or_range(addr, afi, safi);
     IPAddressOrRange *aor;
@@ -613,7 +614,7 @@ int X509v3_addr_add_prefix(IPAddrBlocks *addr,
  * Add a range.
  */
 int X509v3_addr_add_range(IPAddrBlocks *addr,
-    const unsigned afi,
+    unsigned afi,
     const unsigned *safi,
     unsigned char *min, unsigned char *max)
 {
@@ -652,9 +653,9 @@ static int extract_min_max(IPAddressOrRange *aor,
  * Public wrapper for extract_min_max().
  */
 int X509v3_addr_get_range(IPAddressOrRange *aor,
-    const unsigned afi,
+    unsigned afi,
     unsigned char *min,
-    unsigned char *max, const int length)
+    unsigned char *max, int length)
 {
     int afi_length = length_from_afi(afi);
 
@@ -679,10 +680,15 @@ static int IPAddressFamily_cmp(const IPAddressFamily *const *a_,
 {
     const ASN1_OCTET_STRING *a = (*a_)->addressFamily;
     const ASN1_OCTET_STRING *b = (*b_)->addressFamily;
-    int len = ((a->length <= b->length) ? a->length : b->length);
-    int cmp = memcmp(a->data, b->data, len);
+    int cmp, len = (a->length <= b->length) ? a->length : b->length;
 
-    return cmp ? cmp : a->length - b->length;
+    if (len > 0) {
+        cmp = memcmp(a->data, b->data, len);
+        if (cmp != 0)
+            return cmp;
+    }
+
+    return a->length - b->length;
 }
 
 static int IPAddressFamily_check_len(const IPAddressFamily *f)
@@ -754,6 +760,7 @@ int X509v3_addr_is_canonical(IPAddrBlocks *addr)
         aors = f->ipAddressChoice->u.addressesOrRanges;
         if (sk_IPAddressOrRange_num(aors) == 0)
             return 0;
+
         for (j = 0; j < sk_IPAddressOrRange_num(aors) - 1; j++) {
             IPAddressOrRange *a = sk_IPAddressOrRange_value(aors, j);
             IPAddressOrRange *b = sk_IPAddressOrRange_value(aors, j + 1);
@@ -808,78 +815,106 @@ int X509v3_addr_is_canonical(IPAddrBlocks *addr)
 
 /*
  * Whack an IPAddressOrRanges into canonical form.
+ *
+ * After the initial sort, the merge runs as a single linear sweep
+ * over the list using a write index.  Adjacent entries are folded
+ * into the previous output by replacing it with a freshly built
+ * merged range; both old entries are then freed and the source slot
+ * is left NULL so the asn1 free machinery does not double-free on a
+ * subsequent abort.  Total cost is O(N log N) sort + O(N) merge,
+ * with no stack deletes inside the loop.
  */
 static int IPAddressOrRanges_canonize(IPAddressOrRanges *aors,
     const unsigned afi)
 {
-    int i, j, length = length_from_afi(afi);
+    int length = length_from_afi(afi);
+    int read, write = 0, n;
 
-    /*
-     * Sort the IPAddressOrRanges sequence.
-     */
     sk_IPAddressOrRange_sort(aors);
+    n = sk_IPAddressOrRange_num(aors);
 
     /*
-     * Clean up representation issues, punt on duplicates or overlaps.
+     * Error paths below all `return 0` directly.  Slots at
+     * [write..read-1] are NULL (from earlier iterations) and slots at
+     * [read..n-1] still hold their original entries; the caller's
+     * normal teardown walks the whole stack and frees each non-NULL
+     * slot safely, so leaving the stack in this mixed state is sound.
      */
-    for (i = 0; i < sk_IPAddressOrRange_num(aors) - 1; i++) {
-        IPAddressOrRange *a = sk_IPAddressOrRange_value(aors, i);
-        IPAddressOrRange *b = sk_IPAddressOrRange_value(aors, i + 1);
-        unsigned char a_min[ADDR_RAW_BUF_LEN], a_max[ADDR_RAW_BUF_LEN];
-        unsigned char b_min[ADDR_RAW_BUF_LEN], b_max[ADDR_RAW_BUF_LEN];
+    for (read = 0; read < n; read++) {
+        IPAddressOrRange *cur = sk_IPAddressOrRange_value(aors, read);
+        unsigned char c_min[ADDR_RAW_BUF_LEN], c_max[ADDR_RAW_BUF_LEN];
 
-        if (!extract_min_max(a, a_min, a_max, length) || !extract_min_max(b, b_min, b_max, length))
+        if (!extract_min_max(cur, c_min, c_max, length))
             return 0;
 
         /*
-         * Punt inverted ranges.
+         * Punt inverted range.
          */
-        if (memcmp(a_min, a_max, length) > 0 || memcmp(b_min, b_max, length) > 0)
+        if (memcmp(c_min, c_max, length) > 0)
             return 0;
 
-        /*
-         * Punt overlaps.
-         */
-        if (memcmp(a_max, b_min, length) >= 0)
-            return 0;
+        if (write > 0) {
+            IPAddressOrRange *prev = sk_IPAddressOrRange_value(aors,
+                write - 1);
+            unsigned char p_min[ADDR_RAW_BUF_LEN], p_max[ADDR_RAW_BUF_LEN];
+            unsigned char c_min_minus_one[ADDR_RAW_BUF_LEN];
+            int j;
 
-        /*
-         * Merge if a and b are adjacent.  We check for
-         * adjacency by subtracting one from b_min first.
-         */
-        for (j = length - 1; j >= 0 && b_min[j]-- == 0x00; j--)
-            ;
-        if (memcmp(a_max, b_min, length) == 0) {
-            IPAddressOrRange *merged;
-
-            if (!make_addressRange(&merged, a_min, b_max, length))
+            if (!extract_min_max(prev, p_min, p_max, length))
                 return 0;
-            (void)sk_IPAddressOrRange_set(aors, i, merged);
-            (void)sk_IPAddressOrRange_delete(aors, i + 1);
-            IPAddressOrRange_free(a);
-            IPAddressOrRange_free(b);
-            --i;
-            continue;
+
+            /*
+             * Reject overlap with the previous accepted entry.
+             */
+            if (memcmp(p_max, c_min, length) >= 0)
+                return 0;
+
+            /*
+             * Adjacency test: does c_min - 1 equal p_max?  Work on a
+             * scratch copy so the original c_min stays intact for use
+             * as the lower bound if we end up keeping cur.
+             */
+            memcpy(c_min_minus_one, c_min, length);
+            for (j = length - 1;
+                j >= 0 && c_min_minus_one[j]-- == 0x00;
+                j--)
+                ;
+            if (memcmp(p_max, c_min_minus_one, length) == 0) {
+                IPAddressOrRange *merged;
+
+                if (!make_addressRange(&merged, p_min, c_max, length))
+                    return 0;
+                /*
+                 * Replace prev with merged, free the originals, and
+                 * NULL the source slot so the stack does not retain a
+                 * second reference to cur.
+                 */
+                (void)sk_IPAddressOrRange_set(aors, write - 1, merged);
+                IPAddressOrRange_free(prev);
+                IPAddressOrRange_free(cur);
+                (void)sk_IPAddressOrRange_set(aors, read, NULL);
+                continue;
+            }
         }
+
+        /*
+         * Keep cur.  Slide it forward into the write slot if we have
+         * fallen behind, and NULL the source slot to avoid duplicate
+         * ownership.
+         */
+        if (write != read) {
+            (void)sk_IPAddressOrRange_set(aors, write, cur);
+            (void)sk_IPAddressOrRange_set(aors, read, NULL);
+        }
+        write++;
     }
 
     /*
-     * Check for inverted final range.
+     * Compaction succeeded: every slot at [write..n-1] is NULL, so
+     * popping the tail leaves the canonicalised list at [0..write-1].
      */
-    j = sk_IPAddressOrRange_num(aors) - 1;
-    {
-        IPAddressOrRange *a = sk_IPAddressOrRange_value(aors, j);
-
-        if (a != NULL && a->type == IPAddressOrRange_addressRange) {
-            unsigned char a_min[ADDR_RAW_BUF_LEN], a_max[ADDR_RAW_BUF_LEN];
-
-            if (!extract_min_max(a, a_min, a_max, length))
-                return 0;
-            if (memcmp(a_min, a_max, length) > 0)
-                return 0;
-        }
-    }
-
+    while (sk_IPAddressOrRange_num(aors) > write)
+        (void)sk_IPAddressOrRange_pop(aors);
     return 1;
 }
 
@@ -1210,7 +1245,7 @@ int X509v3_addr_subset(IPAddrBlocks *a, IPAddrBlocks *b)
  * X509_V_OK.
  */
 static int addr_validate_path_internal(X509_STORE_CTX *ctx,
-    STACK_OF(X509) *chain,
+    const STACK_OF(X509) *chain,
     IPAddrBlocks *ext)
 {
     IPAddrBlocks *child = NULL;
@@ -1344,7 +1379,7 @@ int X509v3_addr_validate_path(X509_STORE_CTX *ctx)
  * RFC 3779 2.3 path validation of an extension.
  * Test whether chain covers extension.
  */
-int X509v3_addr_validate_resource_set(STACK_OF(X509) *chain,
+int X509v3_addr_validate_resource_set(const STACK_OF(X509) *chain,
     IPAddrBlocks *ext, int allow_inheritance)
 {
     if (ext == NULL)

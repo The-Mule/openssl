@@ -46,6 +46,15 @@
 /* For DTLS1_BAD_VER packets the MAC doesn't include the handshake header */
 #define MAC_OFFSET (DTLS1_RT_HEADER_LENGTH + DTLS1_HM_HEADER_LENGTH)
 
+static unsigned int infinite_timer_cb(SSL *s, unsigned int timer_us)
+{
+    (void)s;
+
+    if (timer_us == 0)
+        return 999999999;
+    return timer_us;
+}
+
 static unsigned char client_random[SSL3_RANDOM_SIZE];
 static unsigned char server_random[SSL3_RANDOM_SIZE];
 
@@ -101,89 +110,17 @@ static SSL_SESSION *client_session(void)
         0x04,
         0x20, /* OCTET_STRING, session id */
 #define SS_SESSID_OFS 15 /* Session ID goes here */
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x04,
-        0x30, /* OCTET_STRING, master secret */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        0x04, 0x30, /* OCTET_STRING, master secret */
 #define SS_SECRET_OFS 49 /* Master secret goes here */
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
     const unsigned char *p = session_asn1;
 
@@ -303,26 +240,8 @@ static int send_hello_verify(BIO *rbio)
         0x00, /* DTLS1_BAD_VER */
         0x14, /* Cookie length */
 #define HV_COOKIE_OFS 28 /* Cookie goes here */
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
 
     memcpy(hello_verify + HV_COOKIE_OFS, cookie, sizeof(cookie));
@@ -332,7 +251,7 @@ static int send_hello_verify(BIO *rbio)
     return 1;
 }
 
-static int send_server_hello(BIO *rbio)
+static int send_server_hello(BIO *rbio, int reorder_ccs)
 {
     static unsigned char server_hello[] = {
         0x16, /* Handshake */
@@ -363,75 +282,18 @@ static int send_server_hello(BIO *rbio)
         0x01,
         0x00, /* DTLS1_BAD_VER */
 #define SH_RANDOM_OFS 27 /* Server random goes here */
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
         0x20, /* Session ID length */
 #define SH_SESSID_OFS 60 /* Session ID goes here */
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00,
         0x2f, /* Cipher suite AES128-SHA */
-        0x00, /* Compression null */
+        0x00 /* Compression null */
     };
     static unsigned char change_cipher_spec[] = {
         0x14, /* Change Cipher Spec */
@@ -449,7 +311,7 @@ static int send_server_hello(BIO *rbio)
         0x03, /* Length */
         0x01,
         0x00,
-        0x02, /* Message */
+        0x02 /* Message */
     };
 
     memcpy(server_hello + SH_RANDOM_OFS, server_random, sizeof(server_random));
@@ -459,8 +321,13 @@ static int send_server_hello(BIO *rbio)
             sizeof(server_hello) - MAC_OFFSET))
         return 0;
 
-    BIO_write(rbio, server_hello, sizeof(server_hello));
-    BIO_write(rbio, change_cipher_spec, sizeof(change_cipher_spec));
+    if (reorder_ccs) {
+        BIO_write(rbio, change_cipher_spec, sizeof(change_cipher_spec));
+        BIO_write(rbio, server_hello, sizeof(server_hello));
+    } else {
+        BIO_write(rbio, server_hello, sizeof(server_hello));
+        BIO_write(rbio, change_cipher_spec, sizeof(change_cipher_spec));
+    }
 
     return 1;
 }
@@ -665,8 +532,9 @@ static struct {
     /* The last test should be NODROP, because a DROP wouldn't get tested. */
 };
 
-static int test_bad_dtls(void)
+static int test_bad_dtls(int idx)
 {
+    int reorder_ccs = idx;
     SSL_SESSION *sess = NULL;
     SSL_CTX *ctx = NULL;
     SSL *con = NULL;
@@ -734,6 +602,8 @@ static int test_bad_dtls(void)
     }
 
     SSL_set_connect_state(con);
+    if (reorder_ccs)
+        DTLS_set_timer_cb(con, infinite_timer_cb);
 
     /* Send initial ClientHello */
     ret = SSL_do_handshake(con);
@@ -747,7 +617,7 @@ static int test_bad_dtls(void)
     if (!TEST_int_le(ret, 0)
         || !TEST_int_eq(SSL_get_error(con, ret), SSL_ERROR_WANT_READ)
         || !TEST_int_eq(validate_client_hello(wbio), 2)
-        || !TEST_true(send_server_hello(rbio)))
+        || !TEST_true(send_server_hello(rbio, reorder_ccs)))
         goto end;
 
     ret = SSL_do_handshake(con);
@@ -808,6 +678,6 @@ end:
 
 int setup_tests(void)
 {
-    ADD_TEST(test_bad_dtls);
+    ADD_ALL_TESTS(test_bad_dtls, 2);
     return 1;
 }

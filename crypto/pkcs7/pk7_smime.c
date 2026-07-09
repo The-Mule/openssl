@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -20,9 +20,8 @@
 
 static int pkcs7_copy_existing_digest(PKCS7 *p7, PKCS7_SIGNER_INFO *si);
 
-PKCS7 *PKCS7_sign_ex(X509 *signcert, EVP_PKEY *pkey, STACK_OF(X509) *certs,
-    BIO *data, int flags, OSSL_LIB_CTX *libctx,
-    const char *propq)
+PKCS7 *PKCS7_sign_ex(X509 *signcert, EVP_PKEY *pkey, const STACK_OF(X509) *certs,
+    BIO *data, int flags, OSSL_LIB_CTX *libctx, const char *propq)
 {
     PKCS7 *p7;
     int i;
@@ -64,7 +63,7 @@ err:
     return NULL;
 }
 
-PKCS7 *PKCS7_sign(X509 *signcert, EVP_PKEY *pkey, STACK_OF(X509) *certs,
+PKCS7 *PKCS7_sign(X509 *signcert, EVP_PKEY *pkey, const STACK_OF(X509) *certs,
     BIO *data, int flags)
 {
     return PKCS7_sign_ex(signcert, pkey, certs, data, flags, NULL, NULL);
@@ -186,7 +185,7 @@ static int pkcs7_copy_existing_digest(PKCS7 *p7, PKCS7_SIGNER_INFO *si)
     int i;
     STACK_OF(PKCS7_SIGNER_INFO) *sinfos;
     PKCS7_SIGNER_INFO *sitmp;
-    ASN1_OCTET_STRING *osdig = NULL;
+    const ASN1_OCTET_STRING *osdig = NULL;
     sinfos = PKCS7_get_signer_info(p7);
     for (i = 0; i < sk_PKCS7_SIGNER_INFO_num(sinfos); i++) {
         sitmp = sk_PKCS7_SIGNER_INFO_value(sinfos, i);
@@ -201,14 +200,14 @@ static int pkcs7_copy_existing_digest(PKCS7 *p7, PKCS7_SIGNER_INFO *si)
     }
 
     if (osdig != NULL)
-        return PKCS7_add1_attrib_digest(si, osdig->data, osdig->length);
+        return PKCS7_add1_attrib_digest(si, ASN1_STRING_get0_data(osdig), ASN1_STRING_length(osdig));
 
     ERR_raise(ERR_LIB_PKCS7, PKCS7_R_NO_MATCHING_DIGEST_TYPE_FOUND);
     return 0;
 }
 
 /* This strongly overlaps with CMS_verify(), partly with PKCS7_dataVerify() */
-int PKCS7_verify(PKCS7 *p7, STACK_OF(X509) *certs, X509_STORE *store,
+int PKCS7_verify(PKCS7 *p7, const STACK_OF(X509) *certs, X509_STORE *store,
     BIO *indata, BIO *out, int flags)
 {
     STACK_OF(X509) *signers;
@@ -222,6 +221,7 @@ int PKCS7_verify(PKCS7 *p7, STACK_OF(X509) *certs, X509_STORE *store,
     int i, j = 0, k, ret = 0;
     BIO *p7bio = NULL;
     BIO *tmpout = NULL;
+    BIO *next = NULL;
     const PKCS7_CTX *p7_ctx;
 
     if (p7 == NULL) {
@@ -352,16 +352,17 @@ err:
         BIO_free(tmpout);
     X509_STORE_CTX_free(cert_ctx);
     OPENSSL_free(buf);
-    if (indata != NULL)
-        BIO_pop(p7bio);
-    BIO_free_all(p7bio);
+    while (p7bio != NULL && p7bio != indata) {
+        next = BIO_pop(p7bio);
+        BIO_free(p7bio);
+        p7bio = next;
+    }
     sk_X509_free(signers);
     sk_X509_free(untrusted);
     return ret;
 }
 
-STACK_OF(X509) *PKCS7_get0_signers(PKCS7 *p7, STACK_OF(X509) *certs,
-    int flags)
+STACK_OF(X509) *PKCS7_get0_signers(PKCS7 *p7, const STACK_OF(X509) *certs, int flags)
 {
     STACK_OF(X509) *signers, *included_certs;
     STACK_OF(PKCS7_SIGNER_INFO) *sinfos;
@@ -421,7 +422,7 @@ STACK_OF(X509) *PKCS7_get0_signers(PKCS7 *p7, STACK_OF(X509) *certs,
 
 /* Build a complete PKCS#7 enveloped data */
 
-PKCS7 *PKCS7_encrypt_ex(STACK_OF(X509) *certs, BIO *in,
+PKCS7 *PKCS7_encrypt_ex(const STACK_OF(X509) *certs, BIO *in,
     const EVP_CIPHER *cipher, int flags,
     OSSL_LIB_CTX *libctx, const char *propq)
 {
@@ -463,8 +464,7 @@ err:
     return NULL;
 }
 
-PKCS7 *PKCS7_encrypt(STACK_OF(X509) *certs, BIO *in, const EVP_CIPHER *cipher,
-    int flags)
+PKCS7 *PKCS7_encrypt(const STACK_OF(X509) *certs, BIO *in, const EVP_CIPHER *cipher, int flags)
 {
     return PKCS7_encrypt_ex(certs, in, cipher, flags, NULL, NULL);
 }

@@ -39,8 +39,6 @@
 
 #define P256_LIMBS (256 / BN_BITS2)
 
-typedef unsigned short u16;
-
 typedef struct {
     BN_ULONG X[P256_LIMBS];
     BN_ULONG Y[P256_LIMBS];
@@ -1533,7 +1531,7 @@ static int ecp_nistz256group_full_init(EC_GROUP *group,
     }
     if (!EC_POINT_copy(group->generator, P))
         goto err;
-    if (!BN_copy(group->order, order))
+    if (BN_copy(group->order, order) == NULL)
         goto err;
     if (!BN_set_word(group->cofactor, 1))
         goto err;

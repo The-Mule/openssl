@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -20,6 +20,7 @@
 
 #include <openssl/asn1.h>
 #include <openssl/evp.h>
+#include <openssl/pkcs12.h>
 #include <openssl/objects.h>
 #include <openssl/posix_time.h>
 #include "testutil.h"
@@ -184,9 +185,9 @@ static int test_unicode_range(void)
                                      "\xff\xff\xff\xff";
     int ok = 1;
 
-    if (!test_unicode(univ_ok, sizeof univ_ok - 1, V_ASN1_UTF8STRING))
+    if (!test_unicode(univ_ok, sizeof(univ_ok) - 1, V_ASN1_UTF8STRING))
         ok = 0;
-    if (!test_unicode(univ_bad, sizeof univ_bad - 1, -1))
+    if (!test_unicode(univ_bad, sizeof(univ_bad) - 1, -1))
         ok = 0;
     return ok;
 }
@@ -194,9 +195,9 @@ static int test_unicode_range(void)
 static int test_invalid_utf8(void)
 {
     const unsigned char inv_utf8[] = "\xF4\x90\x80\x80";
-    unsigned long val;
+    uint32_t val;
 
-    if (!TEST_int_lt(UTF8_getc(inv_utf8, sizeof(inv_utf8), &val), 0))
+    if (!TEST_int_lt(ossl_utf8_getc_internal(inv_utf8, sizeof(inv_utf8), &val), 0))
         return 0;
     return 1;
 }
@@ -475,7 +476,7 @@ static int posix_time_test(void)
 
     /*
      * Frequently platform conversions can not deal with one second before the
-     * the Unix epoch, due to inheriting terrible API design and knocking this
+     * Unix epoch, due to inheriting terrible API design and knocking this
      * time value out as an error return.
      *
      * We should do better.
@@ -554,6 +555,38 @@ err:
     return ret;
 }
 
+static int test_mbstring_ncopy(void)
+{
+    ASN1_STRING *str = NULL;
+    const unsigned char in[] = { 0xFF, 0xFE, 0xFF, 0xFE };
+    int inlen = 4;
+    int inform = MBSTRING_UNIV;
+
+    if (!TEST_int_eq(ASN1_mbstring_ncopy(&str, in, inlen, inform, B_ASN1_GENERALSTRING, 0, 0), -1)
+        || !TEST_int_eq(ASN1_mbstring_ncopy(&str, in, inlen, inform, B_ASN1_VISIBLESTRING, 0, 0), -1)
+        || !TEST_int_eq(ASN1_mbstring_ncopy(&str, in, inlen, inform, B_ASN1_VIDEOTEXSTRING, 0, 0), -1)
+        || !TEST_int_eq(ASN1_mbstring_ncopy(&str, in, inlen, inform, B_ASN1_GENERALIZEDTIME, 0, 0), -1))
+        return 0;
+
+    return 1;
+}
+
+static int test_ossl_uni2utf8(void)
+{
+    const unsigned char in[] = { 0x21, 0x92 }; /* unicode right arrow */
+    int inlen = 2;
+    char *out = NULL;
+    int ok = 0;
+
+    /* reproducer for CVE-2025-69419 */
+    out = OPENSSL_uni2utf8(in, inlen);
+    if (TEST_str_eq(out, "\xe2\x86\x92"))
+        ok = 1;
+
+    OPENSSL_free(out);
+    return ok;
+}
+
 int setup_tests(void)
 {
     ADD_TEST(test_tbl_standard);
@@ -565,5 +598,7 @@ int setup_tests(void)
     ADD_TEST(test_obj_nid_undef);
     ADD_TEST(posix_time_test);
     ADD_TEST(test_asn1_time_tm_conversions);
+    ADD_TEST(test_mbstring_ncopy);
+    ADD_TEST(test_ossl_uni2utf8);
     return 1;
 }

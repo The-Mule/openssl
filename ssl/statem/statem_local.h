@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,9 +14,18 @@
  *                                                                           *
  *****************************************************************************/
 
+#if !defined(OSSL_SSL_STATEM_STATEM_LOCAL_H)
+#define OSSL_SSL_STATEM_STATEM_LOCAL_H
+
+#include <internal/packet.h>
+#include <internal/statem.h>
+
+#include "../ssl_local.h"
+
 /* Max message length definitions */
 
 /* The spec allows for a longer length than this, but we limit it */
+
 #define HELLO_VERIFY_REQUEST_MAX_LENGTH 258
 #define END_OF_EARLY_DATA_MAX_LENGTH 0
 #define HELLO_RETRY_REQUEST_MAX_LENGTH 20000
@@ -43,6 +52,9 @@
 /* Invalid extension ID for non-supported extensions */
 #define TLSEXT_TYPE_invalid 0x10000
 #define TLSEXT_TYPE_out_of_range 0x10001
+/* RFC 8701 GREASE extension placeholders (actual type is dynamic) */
+#define TLSEXT_TYPE_grease1 0x10002
+#define TLSEXT_TYPE_grease2 0x10003
 unsigned int ossl_get_extension_type(size_t idx);
 
 extern const unsigned char hrrrandom[];
@@ -478,6 +490,12 @@ EXT_RETURN tls_construct_ctos_psk_kex_modes(SSL_CONNECTION *s, WPACKET *pkt,
 EXT_RETURN tls_construct_ctos_cookie(SSL_CONNECTION *s, WPACKET *pkt,
     unsigned int context,
     X509 *x, size_t chainidx);
+EXT_RETURN tls_construct_ctos_grease1(SSL_CONNECTION *s, WPACKET *pkt,
+    unsigned int context, X509 *x,
+    size_t chainidx);
+EXT_RETURN tls_construct_ctos_grease2(SSL_CONNECTION *s, WPACKET *pkt,
+    unsigned int context, X509 *x,
+    size_t chainidx);
 EXT_RETURN tls_construct_ctos_padding(SSL_CONNECTION *s, WPACKET *pkt,
     unsigned int context, X509 *x,
     size_t chainidx);
@@ -570,3 +588,17 @@ int tls_parse_ctos_server_cert_type(SSL_CONNECTION *sc, PACKET *pkt,
 int tls_parse_stoc_server_cert_type(SSL_CONNECTION *s, PACKET *pkt,
     unsigned int context,
     X509 *x, size_t chainidx);
+#ifndef OPENSSL_NO_ECH
+EXT_RETURN tls_construct_ctos_ech(SSL_CONNECTION *s, WPACKET *pkt,
+    unsigned int context, X509 *x,
+    size_t chainidx);
+int tls_parse_ctos_ech(SSL_CONNECTION *s, PACKET *pkt, unsigned int context,
+    X509 *x, size_t chainidx);
+EXT_RETURN tls_construct_stoc_ech(SSL_CONNECTION *s, WPACKET *pkt,
+    unsigned int context, X509 *x,
+    size_t chainidx);
+int tls_parse_stoc_ech(SSL_CONNECTION *s, PACKET *pkt, unsigned int context,
+    X509 *x, size_t chainidx);
+#endif
+
+#endif /* !defined(OSSL_SSL_STATEM_STATEM_LOCAL_H) */

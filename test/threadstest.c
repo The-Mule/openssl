@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -125,7 +125,8 @@ static void rwwriter_fn(int id, int *iterations)
     t1 = ossl_time_now();
 
     for (count = 0;; count++) {
-        new = CRYPTO_zalloc(sizeof(int), NULL, 0);
+        new = OPENSSL_zalloc(sizeof(int));
+        OPENSSL_assert(new != NULL);
         if (contention == 0)
             OSSL_sleep(1000);
         if (!CRYPTO_THREAD_write_lock(rwtorturelock))
@@ -319,12 +320,20 @@ static void writer_fn(int id, int *iterations)
     int count;
     OSSL_TIME t1, t2;
     uint64_t *old, *new;
+    CRYPTO_RCU_CB_ITEM *cbi = NULL;
 
     t1 = ossl_time_now();
 
     for (count = 0;; count++) {
-        new = CRYPTO_malloc(sizeof(uint64_t), NULL, 0);
+        new = OPENSSL_zalloc(sizeof(uint64_t));
+        OPENSSL_assert(new != NULL);
         *new = (uint64_t)0xBAD;
+
+        if (contention == 0) {
+            cbi = ossl_rcu_cb_item_new();
+            OPENSSL_assert(cbi != NULL);
+        }
+
         if (contention == 0)
             OSSL_sleep(1000);
         ossl_rcu_write_lock(rcu_lock);
@@ -333,7 +342,7 @@ static void writer_fn(int id, int *iterations)
         *new = global_ctr++;
         ossl_rcu_assign_ptr(&writer_ptr, &new);
         if (contention == 0)
-            ossl_rcu_call(rcu_lock, free_old_rcu_data, old);
+            ossl_rcu_call(rcu_lock, cbi, free_old_rcu_data, old);
         ossl_rcu_write_unlock(rcu_lock);
         if (contention != 0) {
             ossl_synchronize_rcu(rcu_lock);
@@ -751,7 +760,7 @@ static OSSL_PROVIDER *multi_provider[MAXIMUM_PROVIDERS + 1];
 static size_t multi_num_threads;
 static thread_t multi_threads[MAXIMUM_THREADS];
 
-static void multi_intialise(void)
+static void multi_initialise(void)
 {
     multi_success = 1;
     multi_libctx = NULL;
@@ -780,7 +789,7 @@ static void thead_teardown_libctx(void)
     for (p = multi_provider; *p != NULL; p++)
         OSSL_PROVIDER_unload(*p);
     OSSL_LIB_CTX_free(multi_libctx);
-    multi_intialise();
+    multi_initialise();
 }
 
 static int thread_setup_libctx(int libctx, const char *providers[])
@@ -831,7 +840,7 @@ static int thread_run_test(void (*main_func)(void),
 {
     int testresult = 0;
 
-    multi_intialise();
+    multi_initialise();
     if (!thread_setup_libctx(libctx, providers)
         || !start_threads(num_threads, thread_func))
         goto err;
@@ -1010,7 +1019,7 @@ static int test_multi_shared_pkey_common(void (*worker)(void))
 {
     int testresult = 0;
 
-    multi_intialise();
+    multi_initialise();
     if (!thread_setup_libctx(1, do_fips ? fips_and_default_providers : default_provider)
         || !TEST_ptr(shared_evp_pkey = load_pkey_pem(privkey, multi_libctx))
         || !start_threads(1, &thread_shared_evp_pkey)
@@ -1062,7 +1071,7 @@ static int test_multi_shared_pkey_release(void)
     int testresult = 0;
     size_t i = 1;
 
-    multi_intialise();
+    multi_initialise();
     shared_evp_pkey = NULL;
     if (!thread_setup_libctx(1, do_fips ? fips_and_default_providers : default_provider)
         || !TEST_ptr(shared_evp_pkey = load_pkey_pem(privkey, multi_libctx)))
@@ -1095,7 +1104,7 @@ static int test_multi_load_unload_provider(void)
     OSSL_PROVIDER *prov = NULL;
     int testresult = 0;
 
-    multi_intialise();
+    multi_initialise();
     if (!thread_setup_libctx(1, NULL)
         || !TEST_ptr(prov = OSSL_PROVIDER_load(multi_libctx, "default"))
         || !TEST_ptr(sha256 = EVP_MD_fetch(multi_libctx, "SHA2-256", NULL))
@@ -1370,7 +1379,7 @@ static void test_obj_create_worker(void)
 
     for (i = 0; i < 4; i++) {
         now = time(NULL);
-        snprintf(name, sizeof(name), "Time in Seconds = %ld", (long)now);
+        BIO_snprintf(name, sizeof(name), "Time in Seconds = %ld", (long)now);
         while (now == time(NULL))
             /* no-op */;
         nid = OBJ_create(NULL, NULL, name);

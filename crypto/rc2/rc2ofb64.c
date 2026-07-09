@@ -14,7 +14,7 @@
 #include "internal/deprecated.h"
 
 #include <openssl/rc2.h>
-#include "rc2_local.h"
+#include "internal/common.h"
 
 /*
  * The input and output encrypted as though 64bit ofb mode is being used.
@@ -26,7 +26,7 @@ void RC2_ofb64_encrypt(const unsigned char *in, unsigned char *out,
     int *num)
 {
     register unsigned long v0, v1, t;
-    register int n = *num;
+    register int n = *num & 0x07;
     register long l = length;
     unsigned char d[8];
     register char *dp;

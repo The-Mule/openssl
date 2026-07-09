@@ -73,6 +73,20 @@ end:
     return ret;
 }
 
+/*
+ * @brief Fetch digest algorithms based on a propq.
+ * For the import case ossl_ml_dsa_key_new() gets passed a NULL propq,
+ * so the propq is optionally deferred to the import using OSSL_PARAM.
+ */
+int ossl_ml_dsa_key_fetch_digests(ML_DSA_KEY *key, const char *propq)
+{
+    EVP_MD_free(key->shake128_md);
+    EVP_MD_free(key->shake256_md);
+    key->shake128_md = EVP_MD_fetch(key->libctx, "SHAKE-128", propq);
+    key->shake256_md = EVP_MD_fetch(key->libctx, "SHAKE-256", propq);
+    return (key->shake128_md != NULL && key->shake256_md != NULL);
+}
+
 /**
  * @brief Create a new ML_DSA_KEY object
  *
@@ -95,9 +109,7 @@ ML_DSA_KEY *ossl_ml_dsa_key_new(OSSL_LIB_CTX *libctx, const char *propq,
         ret->libctx = libctx;
         ret->params = params;
         ret->prov_flags = ML_DSA_KEY_PROV_FLAGS_DEFAULT;
-        ret->shake128_md = EVP_MD_fetch(libctx, "SHAKE-128", propq);
-        ret->shake256_md = EVP_MD_fetch(libctx, "SHAKE-256", propq);
-        if (ret->shake128_md == NULL || ret->shake256_md == NULL)
+        if (!ossl_ml_dsa_key_fetch_digests(ret, propq))
             goto err;
     }
     return ret;
@@ -281,7 +293,7 @@ int ossl_ml_dsa_key_equal(const ML_DSA_KEY *key1, const ML_DSA_KEY *key2,
         if (!key_checked
             && (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0) {
             if (key1->priv_encoding != NULL && key2->priv_encoding != NULL) {
-                if (memcmp(key1->priv_encoding, key2->priv_encoding,
+                if (CRYPTO_memcmp(key1->priv_encoding, key2->priv_encoding,
                         key1->params->sk_len)
                     != 0)
                     return 0;
@@ -492,7 +504,7 @@ int ossl_ml_dsa_generate_key(ML_DSA_KEY *out)
                 "explicit %s private key does not match seed",
                 out->params->alg);
         }
-        OPENSSL_free(sk);
+        OPENSSL_secure_clear_free(sk, out->params->sk_len);
     }
     return ret;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,6 +7,7 @@
  * https://www.openssl.org/source/license.html
  */
 
+#include "internal/quic_channel.h"
 #include "internal/quic_cfq.h"
 #include "internal/numbers.h"
 
@@ -26,42 +27,42 @@ struct quic_cfq_item_ex_st {
 
 uint64_t ossl_quic_cfq_item_get_frame_type(const QUIC_CFQ_ITEM *item)
 {
-    QUIC_CFQ_ITEM_EX *ex = (QUIC_CFQ_ITEM_EX *)item;
+    const QUIC_CFQ_ITEM_EX *ex = (const QUIC_CFQ_ITEM_EX *)item;
 
     return ex->frame_type;
 }
 
 const unsigned char *ossl_quic_cfq_item_get_encoded(const QUIC_CFQ_ITEM *item)
 {
-    QUIC_CFQ_ITEM_EX *ex = (QUIC_CFQ_ITEM_EX *)item;
+    const QUIC_CFQ_ITEM_EX *ex = (const QUIC_CFQ_ITEM_EX *)item;
 
     return ex->encoded;
 }
 
 size_t ossl_quic_cfq_item_get_encoded_len(const QUIC_CFQ_ITEM *item)
 {
-    QUIC_CFQ_ITEM_EX *ex = (QUIC_CFQ_ITEM_EX *)item;
+    const QUIC_CFQ_ITEM_EX *ex = (const QUIC_CFQ_ITEM_EX *)item;
 
     return ex->encoded_len;
 }
 
 int ossl_quic_cfq_item_get_state(const QUIC_CFQ_ITEM *item)
 {
-    QUIC_CFQ_ITEM_EX *ex = (QUIC_CFQ_ITEM_EX *)item;
+    const QUIC_CFQ_ITEM_EX *ex = (const QUIC_CFQ_ITEM_EX *)item;
 
     return ex->state;
 }
 
 uint32_t ossl_quic_cfq_item_get_pn_space(const QUIC_CFQ_ITEM *item)
 {
-    QUIC_CFQ_ITEM_EX *ex = (QUIC_CFQ_ITEM_EX *)item;
+    const QUIC_CFQ_ITEM_EX *ex = (const QUIC_CFQ_ITEM_EX *)item;
 
     return ex->pn_space;
 }
 
 int ossl_quic_cfq_item_is_unreliable(const QUIC_CFQ_ITEM *item)
 {
-    QUIC_CFQ_ITEM_EX *ex = (QUIC_CFQ_ITEM_EX *)item;
+    const QUIC_CFQ_ITEM_EX *ex = (const QUIC_CFQ_ITEM_EX *)item;
 
     return (ex->flags & QUIC_CFQ_ITEM_FLAG_UNRELIABLE) != 0;
 }
@@ -305,6 +306,20 @@ void ossl_quic_cfq_mark_lost(QUIC_CFQ *cfq, QUIC_CFQ_ITEM *item,
         assert(0); /* invalid state (e.g. in free state) */
         break;
     }
+}
+
+int ossl_quic_cfq_discard_unreliable(QUIC_CFQ *cfq, QUIC_CFQ_ITEM *item)
+{
+    int discarded;
+
+    if (ossl_quic_cfq_item_is_unreliable(item)) {
+        ossl_quic_cfq_release(cfq, item);
+        discarded = 1;
+    } else {
+        discarded = 0;
+    }
+
+    return discarded;
 }
 
 /*

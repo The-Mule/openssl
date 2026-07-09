@@ -276,15 +276,9 @@ int ossl_cipher_generic_block_update(void *vctx, unsigned char *out,
                 return 0;
             }
             padval = (unsigned char)(padnum - 1);
-            if (ctx->tlsversion == SSL3_VERSION) {
-                if (padnum > 1)
-                    memset(out + inl, 0, padnum - 1);
-                *(out + inl + padnum - 1) = padval;
-            } else {
-                /* we need to add 'padnum' padding bytes of value padval */
-                for (loop = inl; loop < inl + padnum; loop++)
-                    out[loop] = padval;
-            }
+            /* we need to add 'padnum' padding bytes of value padval */
+            for (loop = inl; loop < inl + padnum; loop++)
+                out[loop] = padval;
             inl += padnum;
         }
 
@@ -647,6 +641,10 @@ int ossl_cipher_common_set_ctx_params(PROV_CIPHER_CTX *ctx, const struct ossl_ci
         unsigned int num;
 
         if (!OSSL_PARAM_get_uint(p->num, &num)) {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return 0;
+        }
+        if (ctx->blocksize > 0 && num >= (unsigned int)ctx->blocksize) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }

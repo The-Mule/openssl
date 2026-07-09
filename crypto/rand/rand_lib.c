@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -232,11 +232,9 @@ static int rand_set_rand_method_internal(const RAND_METHOD *meth,
         return 0;
     if (!RUN_ONCE(&rand_init, do_rand_init))
         return 0;
-
-    if (!CRYPTO_THREAD_write_lock(rand_meth_lock))
+    if (!CRYPTO_atomic_store_ptr((void **)&default_RAND_meth, (void **)&meth,
+            rand_meth_lock))
         return 0;
-    default_RAND_meth = meth;
-    CRYPTO_THREAD_unlock(rand_meth_lock);
     return 1;
 }
 
@@ -248,26 +246,35 @@ int RAND_set_rand_method(const RAND_METHOD *meth)
 const RAND_METHOD *RAND_get_rand_method(void)
 {
     const RAND_METHOD *tmp_meth = NULL;
+    int lock_failed;
 
     if (!RUN_ONCE(&rand_init, do_rand_init))
-        return NULL;
+        goto end;
 
-    if (rand_meth_lock == NULL)
+    if (CRYPTO_atomic_load_ptr((void **)&default_RAND_meth, (void **)&tmp_meth,
+            rand_meth_lock)) {
+        if (tmp_meth != NULL)
+            return tmp_meth;
+    } else {
         return NULL;
+    }
 
-    if (!CRYPTO_THREAD_read_lock(rand_meth_lock))
-        return NULL;
-    tmp_meth = default_RAND_meth;
-    CRYPTO_THREAD_unlock(rand_meth_lock);
-    if (tmp_meth != NULL)
-        return tmp_meth;
-
-    if (!CRYPTO_THREAD_write_lock(rand_meth_lock))
-        return NULL;
-    if (default_RAND_meth == NULL)
-        default_RAND_meth = &ossl_rand_meth;
-    tmp_meth = default_RAND_meth;
-    CRYPTO_THREAD_unlock(rand_meth_lock);
+    /*
+     * We atomically compare and exchange default_RAND_meth
+     * if default_RAND_meth is NULL, we assign ossl_rand_meth to it
+     * If this returns 1, then the exchange was successful, and we can just
+     * return &ossl_rand_meth
+     * If it fails, then the contents of default_RAND_meth are written to tmp_meth
+     * which we can just return as is
+     */
+    if (CRYPTO_atomic_cmp_exch_ptr((void **)&default_RAND_meth, (void **)&tmp_meth,
+            (void *)&ossl_rand_meth, rand_meth_lock, &lock_failed)) {
+        tmp_meth = &ossl_rand_meth;
+    } else {
+        if (lock_failed == 1)
+            return NULL;
+    }
+end:
     return tmp_meth;
 }
 #endif /* OPENSSL_NO_DEPRECATED_3_0 */
@@ -527,22 +534,30 @@ static EVP_RAND_CTX *rand_new_seed(OSSL_LIB_CTX *libctx)
     const char *propq;
     char *name;
     EVP_RAND_CTX *ctx = NULL;
+    int fallback = 0;
 #ifdef OPENSSL_NO_FIPS_JITTER
     RAND_GLOBAL *dgbl = rand_get_global(libctx);
 
     if (dgbl == NULL)
         return NULL;
     propq = dgbl->seed_propq;
-    name = dgbl->seed_name != NULL ? dgbl->seed_name
-                                   : OPENSSL_MSTR(OPENSSL_DEFAULT_SEED_SRC);
+    if (dgbl->seed_name != NULL) {
+        name = dgbl->seed_name;
+    } else {
+        fallback = 1;
+        name = OPENSSL_MSTR(OPENSSL_DEFAULT_SEED_SRC);
+    }
 #else /* !OPENSSL_NO_FIPS_JITTER */
     name = "JITTER";
     propq = "";
 #endif /* OPENSSL_NO_FIPS_JITTER */
 
+    ERR_set_mark();
     rand = EVP_RAND_fetch(libctx, name, propq);
+    ERR_pop_to_mark();
     if (rand == NULL) {
-        ERR_raise(ERR_LIB_RAND, RAND_R_UNABLE_TO_FETCH_DRBG);
+        if (!fallback)
+            ERR_raise(ERR_LIB_RAND, RAND_R_UNABLE_TO_FETCH_DRBG);
         goto err;
     }
     ctx = EVP_RAND_CTX_new(rand, NULL);
@@ -695,6 +710,11 @@ static EVP_RAND_CTX *rand_get0_primary(OSSL_LIB_CTX *ctx, RAND_GLOBAL *dgbl)
     if (seed == NULL) {
         ERR_set_mark();
         seed = newseed = rand_new_seed(ctx);
+        if (ERR_count_to_mark() > 0) {
+            EVP_RAND_CTX_free(newseed);
+            ERR_clear_last_mark();
+            return NULL;
+        }
         ERR_pop_to_mark();
     }
 #endif /* !FIPS_MODULE || !OPENSSL_NO_FIPS_JITTER */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -176,8 +176,7 @@ static int aes_set_ctx_params(void *vctx, const OSSL_PARAM params[])
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
-        if (ctx->base.tlsversion == SSL3_VERSION
-            || ctx->base.tlsversion == TLS1_VERSION) {
+        if (ctx->base.tlsversion == TLS1_VERSION) {
             if (!ossl_assert(ctx->base.removetlsfixed >= AES_BLOCK_SIZE)) {
                 ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
                 return 0;
@@ -287,6 +286,15 @@ static void *aes_cbc_hmac_sha1_newctx(void *provctx, size_t kbits,
     if (!ossl_prov_is_running())
         return NULL;
 
+#ifdef FIPS_MODULE
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(provctx),
+            ST_ID_CIPHER_AES_128_ECB))
+        return NULL;
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(provctx),
+            ST_ID_DIGEST_SHA1))
+        return NULL;
+#endif
+
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx != NULL)
         base_init(provctx, &ctx->base_ctx,
@@ -326,6 +334,15 @@ static void *aes_cbc_hmac_sha256_newctx(void *provctx, size_t kbits,
 
     if (!ossl_prov_is_running())
         return NULL;
+
+#ifdef FIPS_MODULE
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(provctx),
+            ST_ID_CIPHER_AES_128_ECB))
+        return NULL;
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(provctx),
+            ST_ID_DIGEST_SHA256))
+        return NULL;
+#endif
 
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx != NULL)

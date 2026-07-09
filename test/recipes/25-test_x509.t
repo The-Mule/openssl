@@ -17,7 +17,7 @@ use File::Compare qw/compare_text/;
 
 setup("test_x509");
 
-plan tests => 150;
+plan tests => 152;
 
 # Prevent MSys2 filename munging for arguments that look like file paths but
 # aren't
@@ -414,6 +414,12 @@ cert_contains($time_spec_per_cert,
               "Years: 2023, 2024",
               1, 'X.509 Time Specification (Periodic)');
 
+my $time_spec_per_no_second_cert =
+    srctop_file(@certs, "ext-timeSpecification-periodic-no-second.pem");
+cert_contains($time_spec_per_no_second_cert,
+              "05:43:00 - 12:34:56",
+              1, 'X.509 Time Specification (Periodic, no second)');
+
 my $attr_map_cert = srctop_file(@certs, "ext-attributeMappings.pem");
 cert_contains($attr_map_cert,
               "commonName == localityName",
@@ -670,8 +676,9 @@ ok(!run(app(["openssl", "x509", "-checkend", $delta_early + 3600,
 # Single + expiring at boundary
 # Test may fail erroneously due to sequential now() calls
 # See https://github.com/openssl/openssl/pull/29155
+# Certificate should be valid at exact NotAfter time.
 my $delta_exact = Time::Piece->strptime( get_field($c_early, "Not After "),
-                    "%b %d %T %Y %Z")->epoch - Time::Piece->gmtime->epoch;
+                    "%b %d %T %Y %Z")->epoch - Time::Piece->gmtime->epoch + 1;
 ok(!run(app(["openssl", "x509", "-checkend", $delta_exact, "-in", $c_early])),
     "Single cert + expiring at -checkend boundary");
 # Multi + none expiring
@@ -702,3 +709,42 @@ ok(!run(app(["openssl", "x509", "-multi", "-checkend",
 # Bad parse still returns non-zero
 ok(!run(app(["openssl", "x509", "-checkend", "60", "-in", $c_key])),
     "Bad parse with -checkend returns non-zero");
+
+# Signing using DER-encoded key and CA cert/key inputs,
+# exercising -keyform, -CAform and -CAkeyform
+subtest 'x509 signing with DER -keyform, -CAform and -CAkeyform' => sub {
+    plan tests => 6;
+
+    my $csr = srctop_file(@certs, "x509-check.csr");
+    my $signkey_der = "x509-check-key.der";
+    my $cacert_der = "ca-cert.der";
+    my $cakey_der = "ca-key.der";
+
+    # self-sign the CSR with a DER-encoded signing key
+    ok(run(app(["openssl", "pkey",
+                "-in", srctop_file(@certs, "x509-check-key.pem"),
+                "-outform", "DER", "-out", $signkey_der])),
+       "convert signing key to DER");
+    ok(run(app(["openssl", "x509", "-req", "-in", $csr,
+                "-signkey", $signkey_der, "-keyform", "DER",
+                "-out", "x509-self-der.pem"])),
+       "self-sign CSR with -keyform DER");
+
+    # sign the CSR with a DER-encoded CA cert and CA key
+    ok(run(app(["openssl", "x509",
+                "-in", srctop_file(@certs, "ca-cert.pem"),
+                "-outform", "DER", "-out", $cacert_der])),
+       "convert CA cert to DER");
+    ok(run(app(["openssl", "pkey",
+                "-in", srctop_file(@certs, "ca-key.pem"),
+                "-outform", "DER", "-out", $cakey_der])),
+       "convert CA key to DER");
+    my $caout = "ca-issued-der.pem";
+    ok(run(app(["openssl", "x509", "-req", "-in", $csr,
+                "-CA", $cacert_der, "-CAform", "DER",
+                "-CAkey", $cakey_der, "-CAkeyform", "DER",
+                "-CAcreateserial", "-text", "-out", $caout])),
+       "sign CSR with -CAform DER and -CAkeyform DER");
+    ok(get_issuer($caout) =~ /CN=CA/,
+       "issuer of CA-signed cert matches DER CA cert");
+};

@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -471,7 +471,7 @@ static int random_data(const uint32_t *key, uint8_t *data, size_t data_len, size
     if (cipher == NULL)
         goto err;
 
-    if (EVP_EncryptInit_ex2(ctx, cipher, (uint8_t *)key, (uint8_t *)counter, NULL) == 0)
+    if (EVP_EncryptInit_ex2(ctx, cipher, (const uint8_t *)key, (uint8_t *)counter, NULL) == 0)
         goto err;
 
     while (data_len > 0) {
@@ -776,6 +776,22 @@ err:
     return testresult;
 }
 #endif /* !defined(OPENSSL_NO_CHACHA) */
+
+static int test_bio_dgram_mfail(void)
+{
+    BIO *bio;
+
+    MFAIL_start();
+    bio = BIO_new(BIO_s_dgram_mem());
+    MFAIL_end();
+
+    if (bio == NULL)
+        return 0;
+
+    BIO_free(bio);
+    return 1;
+}
+
 #endif /* !defined(OPENSSL_NO_DGRAM) && !defined(OPENSSL_NO_SOCK) */
 
 int setup_tests(void)
@@ -790,6 +806,7 @@ int setup_tests(void)
 #if !defined(OPENSSL_NO_CHACHA)
     ADD_ALL_TESTS(test_bio_dgram_pair, 3);
 #endif
+    ADD_MFAIL_TEST(test_bio_dgram_mfail);
 #endif
 
     return 1;

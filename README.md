@@ -150,10 +150,10 @@ The manual pages for the master branch and all current stable releases are
 available online.
 
 - [OpenSSL master](https://docs.openssl.org/master/)
+- [OpenSSL 4.0](https://docs.openssl.org/4.0/)
+- [OpenSSL 3.6](https://docs.openssl.org/3.6/)
 - [OpenSSL 3.5](https://docs.openssl.org/3.5/)
 - [OpenSSL 3.4](https://docs.openssl.org/3.4/)
-- [OpenSSL 3.3](https://docs.openssl.org/3.3/)
-- [OpenSSL 3.2](https://docs.openssl.org/3.2/)
 - [OpenSSL 3.0](https://docs.openssl.org/3.0/)
 
 Demos
@@ -198,7 +198,7 @@ attempting to develop or distribute cryptographic code.
 Copyright
 =========
 
-Copyright (c) 1998-2025 The OpenSSL Project Authors
+Copyright (c) 1998-2026 The OpenSSL Project Authors
 
 Copyright (c) 1995-1998 Eric A. Young, Tim J. Hudson
 

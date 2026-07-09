@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -61,18 +61,19 @@ typedef enum OPTION_choice {
     OPT_BUGS,
     OPT_VERIFY,
     OPT_TIME,
-    OPT_SSL3,
     OPT_WWW,
     OPT_TLS1,
     OPT_TLS1_1,
     OPT_TLS1_2,
     OPT_TLS1_3,
+    OPT_TESTMODE,
     OPT_PROV_ENUM
 } OPTION_CHOICE;
 
 const OPTIONS s_time_options[] = {
     OPT_SECTION("General"),
     { "help", OPT_HELP, '-', "Display this summary" },
+    { "testmode", OPT_TESTMODE, '-', "Run the s_time command in test mode" },
 
     OPT_SECTION("Connection"),
     { "connect", OPT_CONNECT, 's',
@@ -83,9 +84,6 @@ const OPTIONS s_time_options[] = {
     { "cipher", OPT_CIPHER, 's', "TLSv1.2 and below cipher list to be used" },
     { "ciphersuites", OPT_CIPHERSUITES, 's',
         "Specify TLSv1.3 ciphersuites to be used" },
-#ifndef OPENSSL_NO_SSL3
-    { "ssl3", OPT_SSL3, '-', "Just use SSLv3" },
-#endif
 #ifndef OPENSSL_NO_TLS1
     { "tls1", OPT_TLS1, '-', "Just use TLSv1.0" },
 #endif
@@ -107,10 +105,10 @@ const OPTIONS s_time_options[] = {
     { "nameopt", OPT_NAMEOPT, 's', "Certificate subject/issuer name printing options" },
     { "cert", OPT_CERT, '<', "Cert file to use, PEM format assumed" },
     { "key", OPT_KEY, '<', "File with key, PEM; default is -cert file" },
-    { "cafile", OPT_CAFILE, '<', "PEM format file of CA's" },
-    { "CAfile", OPT_CAFILE, '<', "PEM format file of CA's" },
-    { "CApath", OPT_CAPATH, '/', "PEM format directory of CA's" },
-    { "CAstore", OPT_CASTORE, ':', "URI to store of CA's" },
+    { "cafile", OPT_CAFILE, '<', "Deprecated alias of -CAfile" },
+    { "CAfile", OPT_CAFILE, '<', "File in PEM format with trusted CA certs" },
+    { "CApath", OPT_CAPATH, '/', "Dir with trusted CA cert files in PEM format" },
+    { "CAstore", OPT_CASTORE, ':', "URI of store with trusted CA certs" },
     { "no-CAfile", OPT_NOCAFILE, '-',
         "Do not load the default certificates file" },
     { "no-CApath", OPT_NOCAPATH, '-',
@@ -146,7 +144,7 @@ int s_time_main(int argc, char **argv)
     long bytes_read = 0, finishtime = 0;
     OPTION_CHOICE o;
     int min_version = 0, max_version = 0, ver, buf_len, fd;
-    int want_verify = 0;
+    int want_verify = 0, testmode = 0;
     size_t buf_size;
 
     meth = TLS_client_method();
@@ -226,10 +224,6 @@ int s_time_main(int argc, char **argv)
                 goto end;
             }
             break;
-        case OPT_SSL3:
-            min_version = SSL3_VERSION;
-            max_version = SSL3_VERSION;
-            break;
         case OPT_TLS1:
             min_version = TLS1_VERSION;
             max_version = TLS1_VERSION;
@@ -245,6 +239,9 @@ int s_time_main(int argc, char **argv)
         case OPT_TLS1_3:
             min_version = TLS1_3_VERSION;
             max_version = TLS1_3_VERSION;
+            break;
+        case OPT_TESTMODE:
+            testmode = 1;
             break;
         case OPT_PROV_CASES:
             if (!opt_provider(o))
@@ -294,7 +291,8 @@ int s_time_main(int argc, char **argv)
 
     if (!(perform & 1))
         goto next;
-    printf("Collecting connection statistics for %d seconds\n", maxtime);
+    if (!testmode)
+        printf("Collecting connection statistics for %d seconds\n", maxtime);
 
     /* Loop and time how long it takes to make connections */
 
@@ -302,7 +300,7 @@ int s_time_main(int argc, char **argv)
     finishtime = (long)time(NULL) + maxtime;
     tm_Time_F(START);
     for (;;) {
-        if (finishtime < (long)time(NULL))
+        if (testmode ? nConn >= 1 : finishtime < (long)time(NULL))
             break;
 
         if ((scon = doConnection(NULL, host, ctx)) == NULL)
@@ -326,8 +324,6 @@ int s_time_main(int argc, char **argv)
             ver = SSL_version(scon);
             if (ver == TLS1_VERSION)
                 ver = 't';
-            else if (ver == SSL3_VERSION)
-                ver = '3';
             else
                 ver = '*';
         }
@@ -354,11 +350,12 @@ next:
         ret = 0;
         goto end;
     }
-    printf("\n\nNow timing with session id reuse.\n");
+    if (!testmode)
+        printf("\n\nNow timing with session id reuse.\n");
 
     /* Get an SSL object so we can reuse the session id */
     if ((scon = doConnection(NULL, host, ctx)) == NULL) {
-        BIO_printf(bio_err, "Unable to get connection\n");
+        BIO_puts(bio_err, "Unable to get connection\n");
         goto end;
     }
 
@@ -378,12 +375,13 @@ next:
 
     finishtime = (long)time(NULL) + maxtime;
 
-    printf("starting\n");
+    if (!testmode)
+        printf("starting\n");
     bytes_read = 0;
     tm_Time_F(START);
 
     for (;;) {
-        if (finishtime < (long)time(NULL))
+        if (testmode ? nConn >= 2 : finishtime < (long)time(NULL))
             break;
 
         if ((doConnection(scon, host, ctx)) == NULL)
@@ -408,8 +406,6 @@ next:
             ver = SSL_version(scon);
             if (ver == TLS1_VERSION)
                 ver = 't';
-            else if (ver == SSL3_VERSION)
-                ver = '3';
             else
                 ver = '*';
         }
@@ -478,7 +474,7 @@ static SSL *doConnection(SSL *scon, const char *host, SSL_CTX *ctx)
     /* ok, lets connect */
     i = SSL_connect(serverCon);
     if (i <= 0) {
-        BIO_printf(bio_err, "ERROR\n");
+        BIO_puts(bio_err, "ERROR\n");
         if (verify_args.error != X509_V_OK)
             BIO_printf(bio_err, "verify error:%s\n",
                 X509_verify_cert_error_string(verify_args.error));

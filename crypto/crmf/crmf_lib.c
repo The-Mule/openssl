@@ -1,5 +1,5 @@
 /*-
- * Copyright 2007-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2007-2026 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright Nokia 2007-2018
  * Copyright Siemens AG 2015-2019
  *
@@ -537,13 +537,13 @@ int OSSL_CRMF_MSGS_verify_popo(const OSSL_CRMF_MSGS *reqs,
     return 1;
 }
 
-int OSSL_CRMF_MSG_centralkeygen_requested(const OSSL_CRMF_MSG *crm, const X509_REQ *p10cr)
+int OSSL_CRMF_MSG_centralkeygen_requested(const OSSL_CRMF_MSG *crm, const X509_REQ *p10)
 {
     X509_PUBKEY *pubkey = NULL;
     const unsigned char *pk = NULL;
     int pklen, ret = 0;
 
-    if (crm == NULL && p10cr == NULL) {
+    if (crm == NULL && p10 == NULL) {
         ERR_raise(ERR_LIB_CRMF, CRMF_R_NULL_ARGUMENT);
         return -1;
     }
@@ -551,7 +551,7 @@ int OSSL_CRMF_MSG_centralkeygen_requested(const OSSL_CRMF_MSG *crm, const X509_R
     if (crm != NULL)
         pubkey = OSSL_CRMF_CERTTEMPLATE_get0_publicKey(OSSL_CRMF_MSG_get0_tmpl(crm));
     else
-        pubkey = p10cr->req_info.pubkey;
+        pubkey = p10->req_info.pubkey;
 
     if (pubkey == NULL
         || (X509_PUBKEY_get0_param(NULL, &pk, &pklen, NULL, pubkey)
@@ -762,6 +762,7 @@ unsigned char *OSSL_CRMF_ENCRYPTEDVALUE_decrypt(const OSSL_CRMF_ENCRYPTEDVALUE *
     EVP_CIPHER *cipher = NULL; /* used cipher */
     int cikeysize = 0; /* key size from cipher */
     unsigned char *iv = NULL; /* initial vector for symmetric encryption */
+    int iv_len; /* iv length */
     unsigned char *out = NULL; /* decryption output buffer */
     int n, ret = 0;
     EVP_PKEY_CTX *pkctx = NULL; /* private key context */
@@ -780,16 +781,11 @@ unsigned char *OSSL_CRMF_ENCRYPTEDVALUE_decrypt(const OSSL_CRMF_ENCRYPTEDVALUE *
 
     /* select symmetric cipher based on algorithm given in message */
     OBJ_obj2txt(name, sizeof(name), enc->symmAlg->algorithm, 0);
-    (void)ERR_set_mark();
     cipher = EVP_CIPHER_fetch(libctx, name, propq);
-    if (cipher == NULL)
-        cipher = (EVP_CIPHER *)EVP_get_cipherbyobj(enc->symmAlg->algorithm);
     if (cipher == NULL) {
-        (void)ERR_clear_last_mark();
         ERR_raise(ERR_LIB_CRMF, CRMF_R_UNSUPPORTED_CIPHER);
         goto end;
     }
-    (void)ERR_pop_to_mark();
 
     cikeysize = EVP_CIPHER_get_key_length(cipher);
     /* first the symmetric key needs to be decrypted */
@@ -816,11 +812,12 @@ unsigned char *OSSL_CRMF_ENCRYPTEDVALUE_decrypt(const OSSL_CRMF_ENCRYPTEDVALUE *
     } else {
         goto end;
     }
-    if ((iv = OPENSSL_malloc(EVP_CIPHER_get_iv_length(cipher))) == NULL)
+    iv_len = EVP_CIPHER_get_iv_length(cipher);
+    if ((iv = OPENSSL_malloc(iv_len)) == NULL)
         goto end;
-    if (ASN1_TYPE_get_octetstring(enc->symmAlg->parameter, iv,
-            EVP_CIPHER_get_iv_length(cipher))
-        != EVP_CIPHER_get_iv_length(cipher)) {
+    if (enc->symmAlg->parameter == NULL
+        || ASN1_TYPE_get_octetstring(enc->symmAlg->parameter, iv, iv_len)
+            != iv_len) {
         ERR_raise(ERR_LIB_CRMF, CRMF_R_MALFORMED_IV);
         goto end;
     }
@@ -853,7 +850,7 @@ end:
     return NULL;
 }
 
-/*
+/*-
  * Decrypts the certificate in the given encryptedValue using private key pkey.
  * This is needed for the indirect PoP method as in RFC 9810 section 5.2.8.3.2.
  *
@@ -883,6 +880,7 @@ end:
     OPENSSL_free(buf);
     return cert;
 }
+
 /*-
  * Decrypts the certificate in the given encryptedKey using private key pkey.
  * This is needed for the indirect PoP method as in RFC 9810 section 5.2.8.3.2.

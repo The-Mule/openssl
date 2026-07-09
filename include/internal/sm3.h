@@ -13,6 +13,8 @@
 #define OSSL_INTERNAL_SM3_H
 #pragma once
 
+#include <stddef.h>
+
 #include <openssl/opensslconf.h>
 
 #ifdef OPENSSL_NO_SM3
@@ -20,7 +22,7 @@
 #endif
 
 #define SM3_DIGEST_LENGTH 32
-#define SM3_WORD unsigned int
+typedef unsigned int SM3_WORD;
 
 #define SM3_CBLOCK 64
 #define SM3_LBLOCK (SM3_CBLOCK / 4)

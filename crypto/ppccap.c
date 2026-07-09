@@ -28,7 +28,7 @@
 #endif
 #include <openssl/crypto.h>
 #include "internal/cryptlib.h"
-#include "crypto/ppc_arch.h"
+#include "arch/ppc_arch.h"
 
 unsigned int OPENSSL_ppccap_P = 0;
 
@@ -134,6 +134,9 @@ static unsigned long getauxval(unsigned long key)
 #define HWCAP_ARCH_3_00 (1U << 23)
 #define HWCAP_ARCH_3_1 (1U << 18)
 
+#if defined(__GNUC__) && __GNUC__ >= 2
+__attribute__((constructor))
+#endif
 void OPENSSL_cpuid_setup(void)
 {
     char *e;

@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2015-2024 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2015-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -70,9 +70,10 @@ plan skip_all => "$test_name needs EC enabled"
     [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_SUPPORTED_GROUPS,
         TLSProxy::Message::CLIENT,
         checkhandshake::DEFAULT_EXTENSIONS],
-    [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_EC_POINT_FORMATS,
-        TLSProxy::Message::CLIENT,
-        checkhandshake::DEFAULT_EXTENSIONS],
+    (disabled("tls1_2") ? () :
+        [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_EC_POINT_FORMATS,
+            TLSProxy::Message::CLIENT,
+            checkhandshake::DEFAULT_EXTENSIONS]),
     [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_SIG_ALGS,
         TLSProxy::Message::CLIENT,
         checkhandshake::DEFAULT_EXTENSIONS],
@@ -126,9 +127,10 @@ plan skip_all => "$test_name needs EC enabled"
     [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_SUPPORTED_GROUPS,
         TLSProxy::Message::CLIENT,
         checkhandshake::DEFAULT_EXTENSIONS],
-    [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_EC_POINT_FORMATS,
-        TLSProxy::Message::CLIENT,
-        checkhandshake::DEFAULT_EXTENSIONS],
+    (disabled("tls1_2") ? () :
+        [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_EC_POINT_FORMATS,
+            TLSProxy::Message::CLIENT,
+            checkhandshake::DEFAULT_EXTENSIONS]),
     [TLSProxy::Message::MT_CLIENT_HELLO, TLSProxy::Message::EXT_SIG_ALGS,
         TLSProxy::Message::CLIENT,
         checkhandshake::DEFAULT_EXTENSIONS],
@@ -206,8 +208,12 @@ my $proxy = TLSProxy::Proxy->new(
     undef,
     cmdstr(app(["openssl"]), display => 1),
     srctop_file("apps", "server.pem"),
-    (!$ENV{HARNESS_ACTIVE} || $ENV{HARNESS_VERBOSE})
+    (!$ENV{HARNESS_ACTIVE} || $ENV{HARNESS_VERBOSE}),
+    have_IPv6()
 );
+my $fatal_alert = 0;
+my $hello_request_added = 0;
+my $hello_request_after_server_hello = 0;
 
 #Test 1: Check we get all the right messages for a default handshake
 (undef, my $session) = tempfile();
@@ -216,7 +222,7 @@ $proxy->cipherc("DEFAULT:\@SECLEVEL=2");
 $proxy->clientflags("-no_rx_cert_comp -sess_out ".$session);
 $proxy->sessionfile($session);
 $proxy->start() or plan skip_all => "Unable to start up Proxy for tests";
-plan tests => 17;
+plan tests => 19;
 checkhandshake($proxy, checkhandshake::DEFAULT_HANDSHAKE,
                checkhandshake::DEFAULT_EXTENSIONS,
                "Default handshake test");
@@ -416,4 +422,90 @@ checkhandshake($proxy, checkhandshake::DEFAULT_HANDSHAKE,
                | checkhandshake::SUPPORTED_GROUPS_SRV_EXTENSION,
                "Acceptable but non preferred key_share");
 
+#Test 18: HelloRequest is reserved in TLSv1.3
+$proxy->clear();
+$fatal_alert = 0;
+$hello_request_added = 0;
+$hello_request_after_server_hello = 0;
+$proxy->filter(\&inject_hello_request);
+$proxy->cipherc("DEFAULT:\@SECLEVEL=2");
+$proxy->clientflags("-no_rx_cert_comp");
+$proxy->start();
+ok($fatal_alert, "HelloRequest rejected in TLSv1.3");
+
+#Test 19: A HelloRequest received after selecting TLSv1.2 in the initial
+#         handshake is still ignored, confirming the legacy skip path is
+#         preserved even when TLSv1.3 was initially enabled.
+SKIP: {
+    skip "TLSv1.2 disabled", 1 if disabled("tls1_2");
+
+    $proxy->clear();
+    $fatal_alert = 0;
+    $hello_request_added = 0;
+    $hello_request_after_server_hello = 1;
+    $proxy->filter(\&inject_hello_request);
+    $proxy->cipherc("DEFAULT:\@SECLEVEL=2");
+    $proxy->clientflags("-no_rx_cert_comp");
+    $proxy->serverflags("-no_tls1_3");
+    $proxy->start();
+    ok(TLSProxy::Message->success() && !$fatal_alert,
+       "HelloRequest ignored in TLSv1.2");
+}
+
 unlink $session;
+
+sub inject_hello_request
+{
+    my $proxy = shift;
+    my $records = $proxy->record_list;
+    my $hello_request;
+    my $record;
+    my $server_hello_record;
+    my $i;
+
+    if ($hello_request_added) {
+        $fatal_alert = 1
+            if @{$records}[-1]->is_fatal_alert(0)
+               == TLSProxy::Message::AL_DESC_UNEXPECTED_MESSAGE;
+        return;
+    }
+
+    return if $proxy->flight != 1;
+
+    $hello_request = pack("C4", TLSProxy::Message::MT_HELLO_REQUEST,
+                          0, 0, 0);
+    $record = TLSProxy::Record->new(
+        1,
+        TLSProxy::Record::RT_HANDSHAKE,
+        TLSProxy::Record::VERS_TLS_1_2,
+        length($hello_request),
+        length($hello_request),
+        length($hello_request),
+        $hello_request,
+        $hello_request
+    );
+
+    if ($hello_request_after_server_hello) {
+        foreach my $message (@{$proxy->message_list}) {
+            next if $message->mt != TLSProxy::Message::MT_SERVER_HELLO
+                    || ${$message->records}[0]->flight != 1;
+
+            $server_hello_record = @{$message->records}[-1];
+            last;
+        }
+
+        return if !defined $server_hello_record;
+
+        for ($i = 0; $i < @{$records}; $i++) {
+            last if ${$records}[$i] == $server_hello_record;
+        }
+        $i++;
+    } else {
+        for ($i = 0; ${$records}[$i]->flight() < 1; $i++) {
+            next;
+        }
+    }
+
+    splice @{$records}, $i, 0, $record;
+    $hello_request_added = 1;
+}

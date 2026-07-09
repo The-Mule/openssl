@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2017-2026 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright 2017 Ribose Inc. All Rights Reserved.
  * Ported from Ribose contributions from Botan.
  *
@@ -20,10 +20,25 @@
 #include <openssl/bn.h>
 #include <string.h>
 
+/*
+ * [SM2 Signature Scheme]
+ * (https://datatracker.ietf.org/doc/html/rfc8998#section-3.2.1)
+ *
+ * If either a client or a server needs to verify the peer's SM2 certificate
+ * contained in the Certificate message, then the following ASCII string value
+ * MUST be used as the SM2 identifier according to [GMT.0009-2012]:
+ *
+ * 1234567812345678
+ */
+static const uint8_t default_sm2_id[] = {
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
+};
+
 int ossl_sm2_compute_z_digest(uint8_t *out,
     const EVP_MD *digest,
     const uint8_t *id,
-    const size_t id_len,
+    size_t id_len,
     const EC_KEY *key)
 {
     int rc = 0;
@@ -60,6 +75,7 @@ int ossl_sm2_compute_z_digest(uint8_t *out,
         goto done;
     }
 
+    BN_CTX_start(ctx);
     p = BN_CTX_get(ctx);
     a = BN_CTX_get(ctx);
     b = BN_CTX_get(ctx);
@@ -79,6 +95,11 @@ int ossl_sm2_compute_z_digest(uint8_t *out,
     }
 
     /* Z = h(ENTL || ID || a || b || xG || yG || xA || yA) */
+
+    if (id == NULL) {
+        id = default_sm2_id;
+        id_len = sizeof(default_sm2_id);
+    }
 
     if (id_len >= (UINT16_MAX / 8)) {
         /* too large */
@@ -141,6 +162,7 @@ int ossl_sm2_compute_z_digest(uint8_t *out,
 
 done:
     OPENSSL_free(buf);
+    BN_CTX_end(ctx);
     BN_CTX_free(ctx);
     EVP_MD_CTX_free(hash);
     return rc;
@@ -322,6 +344,7 @@ done:
         BN_free(s);
     }
 
+    BN_CTX_end(ctx);
     BN_CTX_free(ctx);
     EC_POINT_free(kG);
     return sig;
@@ -405,8 +428,8 @@ static int sm2_sig_verify(const EC_KEY *key, const ECDSA_SIG *sig,
         ret = 1;
 
 done:
-    BN_CTX_end(ctx);
     EC_POINT_free(pt);
+    BN_CTX_end(ctx);
     BN_CTX_free(ctx);
     return ret;
 }

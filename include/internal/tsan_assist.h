@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2018-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -78,7 +78,7 @@
 #endif
 
 #elif defined(_MSC_VER) && _MSC_VER >= 1200 \
-    && (defined(_M_IX86) || defined(_M_AMD64) || defined(_M_X64) || defined(_M_ARM64) || (defined(_M_ARM) && _M_ARM >= 7 && !defined(_WIN32_WCE)))
+    && (defined(_M_IX86) || defined(_M_AMD64) || defined(_M_X64) || defined(_M_ARM64) || (defined(_M_ARM) && _M_ARM >= 7))
 /*
  * There is subtle dependency on /volatile:<iso|ms> command-line option.
  * "ms" implies same semantic as memory_order_acquire for loads and
@@ -137,7 +137,25 @@
 
 #define tsan_load(ptr) (*(ptr))
 #define tsan_store(ptr, val) (*(ptr) = (val))
-#define tsan_add(ptr, n) (*(ptr) += (n))
+
+static ossl_inline ossl_unused int64_t tsan_add_fallback64(int64_t *ptr, int64_t n)
+{
+    int64_t old = *ptr;
+    *ptr = old + n;
+    return old;
+}
+
+static ossl_inline ossl_unused int32_t tsan_add_fallback32(int32_t *ptr, int32_t n)
+{
+    int32_t old = *ptr;
+    *ptr = old + n;
+    return old;
+}
+
+#define tsan_add(ptr, n)                                              \
+    (sizeof(*(ptr)) == 8 ? tsan_add_fallback64((int64_t *)(ptr), (n)) \
+                         : tsan_add_fallback32((int32_t *)(ptr), (n)))
+
 /*
  * Lack of tsan_ld_acq and tsan_ld_rel means that compiler support is not
  * sophisticated enough to support them. Code that relies on them should be

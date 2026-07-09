@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -28,7 +28,7 @@
 #define OCB_MIN_IV_LEN 1
 #define OCB_MAX_IV_LEN 15
 
-PROV_CIPHER_FUNC(int, ocb_cipher, (PROV_AES_OCB_CTX * ctx, const unsigned char *in, unsigned char *out, size_t nextblock));
+PROV_CIPHER_FUNC(int, ocb_cipher, (PROV_AES_OCB_CTX *ctx, const unsigned char *in, unsigned char *out, size_t nextblock));
 /* forward declarations */
 static OSSL_FUNC_cipher_encrypt_init_fn aes_ocb_einit;
 static OSSL_FUNC_cipher_decrypt_init_fn aes_ocb_dinit;
@@ -307,9 +307,7 @@ static void *aes_ocb_newctx(void *provctx, size_t kbits, size_t blkbits,
 {
     PROV_AES_OCB_CTX *ctx;
 
-    if (!ossl_prov_is_running())
-        return NULL;
-
+    CIPHER_PROV_CHECK(provctx, AES_128_OCB);
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx != NULL) {
         ossl_cipher_generic_initkey(ctx, kbits, blkbits, ivbits, mode, flags,
@@ -378,7 +376,7 @@ static int aes_ocb_set_ctx_params(void *vctx, const OSSL_PARAM params[])
             ctx->taglen = p.tag->data_size;
         } else {
             if (ctx->base.enc) {
-                ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT);
+                ERR_raise(ERR_LIB_PROV, PROV_R_TAG_NOT_NEEDED);
                 return 0;
             }
             if (p.tag->data_size != ctx->taglen) {
@@ -478,7 +476,11 @@ static int aes_ocb_get_ctx_params(void *vctx, OSSL_PARAM params[])
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
-        if (!ctx->base.enc || p.tag->data_size != ctx->taglen) {
+        if (!ctx->base.enc) {
+            ERR_raise(ERR_LIB_PROV, PROV_R_TAG_NOT_SET);
+            return 0;
+        }
+        if (p.tag->data_size != ctx->taglen) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_TAG_LENGTH);
             return 0;
         }
@@ -497,6 +499,19 @@ static int aes_ocb_cipher(void *vctx, unsigned char *out, size_t *outl,
 
     if (outsize < inl) {
         ERR_raise(ERR_LIB_PROV, PROV_R_OUTPUT_BUFFER_TOO_SMALL);
+        return 0;
+    }
+
+    /*
+     * Mirror the streaming handler: refuse if the key has not been set,
+     * and push the buffered IV into the OCB context before any data is
+     * processed.  Without this, CRYPTO_ocb128_encrypt/decrypt runs with
+     * Offset_0 = 0 regardless of the caller's IV -- catastrophic
+     * (key, nonce) reuse, and a subsequent EVP_*Final_ex() emits a tag
+     * that is a function of (key, iv) only.
+     */
+    if (!ctx->key_set || !update_iv(ctx)) {
+        ERR_raise(ERR_LIB_PROV, PROV_R_CIPHER_OPERATION_FAILED);
         return 0;
     }
 

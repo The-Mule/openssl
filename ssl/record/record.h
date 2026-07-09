@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,8 +7,13 @@
  * https://www.openssl.org/source/license.html
  */
 
+#if !defined(OSSL_SSL_RECORD_RECORD_H)
+#define OSSL_SSL_RECORD_RECORD_H
+
 #include <openssl/core_dispatch.h>
+
 #include "internal/recordmethod.h"
+#include "internal/statem.h"
 
 /*****************************************************************************
  *                                                                           *
@@ -140,7 +145,6 @@ int RECORD_LAYER_reset(RECORD_LAYER *rl);
 int RECORD_LAYER_read_pending(const RECORD_LAYER *rl);
 int RECORD_LAYER_processed_read_pending(const RECORD_LAYER *rl);
 int RECORD_LAYER_write_pending(const RECORD_LAYER *rl);
-int RECORD_LAYER_is_sslv2_record(RECORD_LAYER *rl);
 __owur size_t ssl3_pending(const SSL *s);
 __owur int ssl3_write_bytes(SSL *s, uint8_t type, const void *buf, size_t len,
     size_t *written);
@@ -190,3 +194,5 @@ OSSL_CORE_MAKE_FUNC(void, rlayer_msg_callback, (int write_p, int version, int co
 OSSL_CORE_MAKE_FUNC(int, rlayer_security, (void *cbarg, int op, int bits, int nid, void *other))
 #define OSSL_FUNC_RLAYER_PADDING 4
 OSSL_CORE_MAKE_FUNC(size_t, rlayer_padding, (void *cbarg, int type, size_t len))
+
+#endif /* !defined(OSSL_SSL_RECORD_RECORD_H) */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2011-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -24,6 +24,7 @@
 #include "crypto/evp/evp_local.h"
 #include "internal/provider.h"
 #include "internal/common.h"
+#include "internal/fips.h"
 
 #define drbg_ctr_get_ctx_params_st drbg_get_ctx_params_st
 #define drbg_ctr_set_ctx_params_st drbg_set_ctx_params_st
@@ -70,12 +71,12 @@ typedef struct rand_drbg_ctr_st {
 static void inc_128(PROV_DRBG_CTR *ctr)
 {
     unsigned char *p = &ctr->V[0];
-    u32 n = 16, c = 1;
+    uint32_t n = 16, c = 1;
 
     do {
         --n;
         c += p[n];
-        p[n] = (u8)c;
+        p[n] = (uint8_t)c;
         c >>= 8;
     } while (n);
 }
@@ -390,12 +391,12 @@ static int drbg_ctr_reseed_wrapper(void *vdrbg, int prediction_resistance,
 
 static void ctr96_inc(unsigned char *counter)
 {
-    u32 n = 12, c = 1;
+    uint32_t n = 12, c = 1;
 
     do {
         --n;
         c += counter[n];
-        counter[n] = (u8)c;
+        counter[n] = (uint8_t)c;
         c >>= 8;
     } while (n);
 }
@@ -646,6 +647,12 @@ static int drbg_ctr_new(PROV_DRBG *drbg)
 static void *drbg_ctr_new_wrapper(void *provctx, void *parent,
     const OSSL_DISPATCH *parent_dispatch)
 {
+#ifdef FIPS_MODULE
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(provctx),
+            ST_ID_DRBG_CTR))
+        return NULL;
+#endif
+
     return ossl_rand_drbg_new(provctx, parent, parent_dispatch,
         &drbg_ctr_new, &drbg_ctr_free,
         &drbg_ctr_instantiate, &drbg_ctr_uninstantiate,

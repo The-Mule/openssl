@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -1215,6 +1215,71 @@ err:
     return st;
 }
 
+typedef struct sum_all_alias_st {
+    const char *hex;
+    int negative;
+} SUM_ALL_ALIAS;
+
+static int test_sum_all_alias_helper(const SUM_ALL_ALIAS *test)
+{
+    BIGNUM *alias = NULL, *orig = NULL, *expected = NULL;
+    int st = 0;
+
+    if (!TEST_true(BN_hex2bn(&alias, test->hex)))
+        goto err;
+    if (test->negative && !BN_is_zero(alias))
+        BN_set_negative(alias, 1);
+    if (!TEST_ptr(orig = BN_dup(alias))
+        || !TEST_ptr(expected = BN_new()))
+        goto err;
+
+    /* BN_add */
+    if (!TEST_true(BN_add(expected, orig, orig))
+        || !TEST_true(BN_add(alias, alias, alias))
+        || !TEST_BN_eq(expected, alias)
+        || !TEST_ptr(BN_copy(alias, orig))
+        /* BN_sub */
+        || !TEST_true(BN_sub(expected, orig, orig))
+        || !TEST_true(BN_sub(alias, alias, alias))
+        || !TEST_BN_eq(expected, alias)
+        || !TEST_ptr(BN_copy(alias, orig))
+        /* BN_uadd */
+        || !TEST_true(BN_uadd(expected, orig, orig))
+        || !TEST_true(BN_uadd(alias, alias, alias))
+        || !TEST_BN_eq(expected, alias)
+        || !TEST_ptr(BN_copy(alias, orig))
+        /* BN_usub */
+        || !TEST_true(BN_usub(expected, orig, orig))
+        || !TEST_true(BN_usub(alias, alias, alias))
+        || !TEST_BN_eq(expected, alias))
+        goto err;
+
+    st = 1;
+err:
+    BN_free(alias);
+    BN_free(orig);
+    BN_free(expected);
+    return st;
+}
+
+static int test_sum_all_alias(void)
+{
+    static const SUM_ALL_ALIAS tests[] = {
+        { "2A", 0 },
+        { "2A", 1 },
+        { "0", 0 },
+        { "FEDCBA98765432100123456789ABCDEFFEDCBA98765432100123456789ABCDEF", 0 },
+        { "FEDCBA98765432100123456789ABCDEFFEDCBA98765432100123456789ABCDEF", 1 }
+    };
+    size_t i;
+
+    for (i = 0; i < OSSL_NELEM(tests); i++) {
+        if (!test_sum_all_alias_helper(&tests[i]))
+            return 0;
+    }
+    return 1;
+}
+
 static int file_sum(STANZA *s)
 {
     BIGNUM *a = NULL, *b = NULL, *sum = NULL, *ret = NULL;
@@ -1238,7 +1303,6 @@ static int file_sum(STANZA *s)
     /*
      * Test that the functions work when |r| and |a| point to the same BIGNUM,
      * or when |r| and |b| point to the same BIGNUM.
-     * There is no test for all of |r|, |a|, and |b| pointint to the same BIGNUM.
      */
     if (!TEST_true(BN_copy(ret, a))
         || !TEST_true(BN_add(ret, ret, b))
@@ -1277,8 +1341,6 @@ static int file_sum(STANZA *s)
         /*
          * Test that the functions work when |r| and |a| point to the same
          * BIGNUM, or when |r| and |b| point to the same BIGNUM.
-         * There is no test for all of |r|, |a|, and |b| pointint to the same
-         * BIGNUM.
          */
         if (!TEST_true(BN_copy(ret, a))
             || !TEST_true(BN_uadd(ret, ret, b))
@@ -1660,6 +1722,52 @@ err:
     BN_free(b);
     BN_free(m);
     BN_free(mod_mul);
+    BN_free(ret);
+    return st;
+}
+
+static int file_modsqr(STANZA *s)
+{
+    BIGNUM *a = NULL, *m = NULL, *mod_sqr = NULL, *ret = NULL;
+    int st = 0;
+
+    if (!TEST_ptr(a = getBN(s, "A"))
+        || !TEST_ptr(m = getBN(s, "M"))
+        || !TEST_ptr(mod_sqr = getBN(s, "ModSqr"))
+        || !TEST_ptr(ret = BN_new()))
+        goto err;
+
+    if (!TEST_true(BN_mod_sqr(ret, a, m, ctx))
+        || !equalBN("A^2 (mod M)", mod_sqr, ret))
+        goto err;
+
+    if (BN_is_odd(m)) {
+        /* Reduce |a| and test the Montgomery version. */
+        BN_MONT_CTX *mont = BN_MONT_CTX_new();
+        BIGNUM *a_tmp = BN_new();
+
+        if (mont == NULL || a_tmp == NULL
+            || !TEST_true(BN_MONT_CTX_set(mont, m, ctx))
+            || !TEST_true(BN_nnmod(a_tmp, a, m, ctx))
+            || !TEST_true(BN_to_montgomery(a_tmp, a_tmp, mont, ctx))
+            || !TEST_true(BN_mod_mul_montgomery(ret, a_tmp, a_tmp,
+                mont, ctx))
+            || !TEST_true(BN_from_montgomery(ret, ret, mont, ctx))
+            || !equalBN("A^2 (mod M) (mont)", mod_sqr, ret))
+            st = 0;
+        else
+            st = 1;
+        BN_MONT_CTX_free(mont);
+        BN_free(a_tmp);
+        if (st == 0)
+            goto err;
+    }
+
+    st = 1;
+err:
+    BN_free(a);
+    BN_free(m);
+    BN_free(mod_sqr);
     BN_free(ret);
     return st;
 }
@@ -3274,6 +3382,7 @@ static int file_test_run(STANZA *s)
         { "Product", file_product },
         { "Quotient", file_quotient },
         { "ModMul", file_modmul },
+        { "ModSqr", file_modsqr },
         { "ModExp", file_modexp },
         { "Exp", file_exp },
         { "ModSqrt", file_modsqrt },
@@ -3373,6 +3482,7 @@ int setup_tests(void)
         ADD_ALL_TESTS(test_signed_mod_replace_ab, OSSL_NELEM(signed_mod_tests));
         ADD_ALL_TESTS(test_signed_mod_replace_ba, OSSL_NELEM(signed_mod_tests));
         ADD_TEST(test_mod);
+        ADD_TEST(test_sum_all_alias);
         ADD_TEST(test_mod_inverse);
         ADD_ALL_TESTS(test_mod_exp_alias, 2);
         ADD_TEST(test_modexp_mont5);

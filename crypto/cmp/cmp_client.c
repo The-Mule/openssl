@@ -10,6 +10,7 @@
  */
 
 #include "cmp_local.h"
+#include <inttypes.h>
 
 #define IS_CREP(t) ((t) == OSSL_CMP_PKIBODY_IP || (t) == OSSL_CMP_PKIBODY_CP \
     || (t) == OSSL_CMP_PKIBODY_KUP)
@@ -140,6 +141,7 @@ static int send_receive_check(OSSL_CMP_CTX *ctx, const OSSL_CMP_MSG *req,
     int time_left;
     OSSL_CMP_transfer_cb_t transfer_cb = ctx->transfer_cb;
 
+    ctx->status = OSSL_CMP_PKISTATUS_trans;
 #ifndef OPENSSL_NO_HTTP
     if (transfer_cb == NULL)
         transfer_cb = OSSL_CMP_MSG_http_perform;
@@ -166,7 +168,7 @@ static int send_receive_check(OSSL_CMP_CTX *ctx, const OSSL_CMP_MSG *req,
     /* should print error queue since transfer_cb may call ERR_clear_error() */
     OSSL_CMP_CTX_print_errors(ctx);
 
-    if (ctx->server != NULL)
+    if (ctx->server != NULL || ctx->transfer_cb != NULL)
         ossl_cmp_log1(INFO, ctx, "sending %s", req_type_str);
 
     *rep = (*transfer_cb)(ctx, req);
@@ -180,6 +182,7 @@ static int send_receive_check(OSSL_CMP_CTX *ctx, const OSSL_CMP_MSG *req,
         return 0;
     }
 
+    ctx->status = OSSL_CMP_PKISTATUS_checking_response;
     bt = OSSL_CMP_MSG_get_bodytype(*rep);
     /*
      * The body type in the 'bt' variable is not yet verified.
@@ -275,11 +278,15 @@ static int poll_for_response(OSSL_CMP_CTX *ctx, int sleep, int rid,
         "received 'waiting' PKIStatus, starting to poll for response");
     *rep = NULL;
     for (;;) {
+        int bak = ctx->status;
+
+        ctx->status = OSSL_CMP_PKISTATUS_request;
         if ((preq = ossl_cmp_pollReq_new(ctx, rid)) == NULL)
             goto err;
 
         if (!send_receive_check(ctx, preq, &prep, OSSL_CMP_PKIBODY_POLLREP))
             goto err;
+        ctx->status = bak;
 
         /* handle potential pollRep */
         if (OSSL_CMP_MSG_get_bodytype(prep) == OSSL_CMP_PKIBODY_POLLREP) {
@@ -303,7 +310,7 @@ static int poll_for_response(OSSL_CMP_CTX *ctx, int sleep, int rid,
             }
             if (check_after < 0 || (uint64_t)check_after > (sleep ? ULONG_MAX / 1000 : INT_MAX)) {
                 ERR_raise(ERR_LIB_CMP, CMP_R_CHECKAFTER_OUT_OF_RANGE);
-                if (BIO_snprintf(str, OSSL_CMP_PKISI_BUFLEN, "value = %jd",
+                if (BIO_snprintf(str, OSSL_CMP_PKISI_BUFLEN, "value = %" PRId64,
                         check_after)
                     >= 0)
                     ERR_add_error_data(1, str);
@@ -335,6 +342,7 @@ static int poll_for_response(OSSL_CMP_CTX *ctx, int sleep, int rid,
                 int64_t time_left = (int64_t)(ctx->end_time - exp - time(NULL));
 
                 if (time_left <= 0) {
+                    ctx->status = OSSL_CMP_PKISTATUS_trans;
                     ERR_raise(ERR_LIB_CMP, CMP_R_TOTAL_TIMEOUT);
                     goto err;
                 }
@@ -446,7 +454,9 @@ int ossl_cmp_exchange_certConf(OSSL_CMP_CTX *ctx, int certReqId,
     OSSL_CMP_MSG *certConf;
     OSSL_CMP_MSG *PKIconf = NULL;
     int res = 0;
+    int bak = ctx->status;
 
+    ctx->status = OSSL_CMP_PKISTATUS_request;
     /* OSSL_CMP_certConf_new() also checks if all necessary options are set */
     certConf = ossl_cmp_certConf_new(ctx, certReqId, fail_info, txt);
     if (certConf == NULL)
@@ -454,6 +464,9 @@ int ossl_cmp_exchange_certConf(OSSL_CMP_CTX *ctx, int certReqId,
 
     res = send_receive_also_delayed(ctx, certConf, &PKIconf,
         OSSL_CMP_PKIBODY_PKICONF);
+
+    if (res)
+        ctx->status = bak;
 
 err:
     OSSL_CMP_MSG_free(certConf);
@@ -470,6 +483,7 @@ int ossl_cmp_exchange_error(OSSL_CMP_CTX *ctx, int status, int fail_info,
     OSSL_CMP_MSG *PKIconf = NULL;
     int res = 0;
 
+    ctx->status = OSSL_CMP_PKISTATUS_request;
     /* not overwriting ctx->status on error exchange */
     if ((si = OSSL_CMP_STATUSINFO_new(status, fail_info, txt)) == NULL)
         goto err;
@@ -479,6 +493,7 @@ int ossl_cmp_exchange_error(OSSL_CMP_CTX *ctx, int status, int fail_info,
 
     res = send_receive_also_delayed(ctx, error,
         &PKIconf, OSSL_CMP_PKIBODY_PKICONF);
+    ctx->status = OSSL_CMP_PKISTATUS_rejected_by_client;
 
 err:
     OSSL_CMP_MSG_free(error);
@@ -781,7 +796,7 @@ retry:
         ERR_raise_data(ERR_LIB_CMP, CMP_R_CERTIFICATE_NOT_ACCEPTED,
             "rejecting newly enrolled cert with subject: %s; %s",
             subj, txt);
-        ctx->status = OSSL_CMP_PKISTATUS_rejection;
+        ctx->status = OSSL_CMP_PKISTATUS_rejected_by_client;
         ret = 0;
     }
     OPENSSL_free(subj);
@@ -803,7 +818,6 @@ static int initial_certreq(OSSL_CMP_CTX *ctx,
     if ((req = ossl_cmp_certreq_new(ctx, req_type, crm)) == NULL)
         return 0;
 
-    ctx->status = OSSL_CMP_PKISTATUS_trans;
     res = send_receive_check(ctx, req, p_rep, rep_type);
     OSSL_CMP_MSG_free(req);
     return res;
@@ -909,7 +923,6 @@ int OSSL_CMP_exec_RR_ses(OSSL_CMP_CTX *ctx)
     if ((rr = ossl_cmp_rr_new(ctx)) == NULL)
         goto end;
 
-    ctx->status = OSSL_CMP_PKISTATUS_trans;
     if (!send_receive_also_delayed(ctx, rr, &rp, OSSL_CMP_PKIBODY_RP))
         goto end;
 
@@ -1029,7 +1042,6 @@ STACK_OF(OSSL_CMP_ITAV) *OSSL_CMP_exec_GENM_ses(OSSL_CMP_CTX *ctx)
     if ((genm = ossl_cmp_genm_new(ctx)) == NULL)
         goto err;
 
-    ctx->status = OSSL_CMP_PKISTATUS_trans;
     if (!send_receive_also_delayed(ctx, genm, &genp, OSSL_CMP_PKIBODY_GENP))
         goto err;
     ctx->status = OSSL_CMP_PKISTATUS_accepted;

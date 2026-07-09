@@ -1,5 +1,5 @@
 /*
- * Copyright 2024-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2024-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -50,6 +50,14 @@ static const ECDH_VINFO hybrid_vtable[] = {
 #if !defined(OPENSSL_NO_ECX)
     { "X25519", NULL, 32, 32, 32, 0, EVP_PKEY_ML_KEM_768 },
     { "X448", NULL, 56, 56, 56, 0, EVP_PKEY_ML_KEM_1024 },
+#else
+    { NULL, NULL, 0, 0, 0, 0, NID_undef },
+    { NULL, NULL, 0, 0, 0, 0, NID_undef },
+#endif
+#if !defined(FIPS_MODULE) && !defined(OPENSSL_NO_SM2)
+    { "curveSM2", "SM2", 65, 32, 32, 1, EVP_PKEY_ML_KEM_768 },
+#else
+    { NULL, NULL, 0, 0, 0, 0, NID_undef },
 #endif
 };
 
@@ -711,15 +719,17 @@ static void *mlx_kem_dup(const void *vkey, int selection)
         || (ret = OPENSSL_memdup(key, sizeof(*ret))) == NULL)
         return NULL;
 
-    if (ret->propq != NULL
-        && (ret->propq = OPENSSL_strdup(ret->propq)) == NULL) {
+    ret->mkey = ret->xkey = NULL;
+
+    if (key->propq != NULL
+        && (ret->propq = OPENSSL_strdup(key->propq)) == NULL) {
         OPENSSL_free(ret);
         return NULL;
     }
 
     /* Absent key material, nothing left to do */
-    if (ret->mkey == NULL) {
-        if (ret->xkey == NULL)
+    if (key->mkey == NULL) {
+        if (key->xkey == NULL)
             return ret;
         /* Fail if the source key is an inconsistent state */
         OPENSSL_free(ret->propq);
@@ -729,7 +739,6 @@ static void *mlx_kem_dup(const void *vkey, int selection)
 
     switch (selection & OSSL_KEYMGMT_SELECT_KEYPAIR) {
     case 0:
-        ret->xkey = ret->mkey = NULL;
         ret->state = MLX_HAVE_NOKEYS;
         return ret;
     case OSSL_KEYMGMT_SELECT_KEYPAIR:
@@ -793,4 +802,7 @@ DECLARE_DISPATCH(p384, 1);
 #if !defined(OPENSSL_NO_ECX)
 DECLARE_DISPATCH(x25519, 2);
 DECLARE_DISPATCH(x448, 3);
+#endif
+#if !defined(FIPS_MODULE) && !defined(OPENSSL_NO_SM2)
+DECLARE_DISPATCH(curve_sm2, 4);
 #endif

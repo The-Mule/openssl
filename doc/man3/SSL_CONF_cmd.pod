@@ -177,16 +177,14 @@ respectively:
     $ openssl list -tls1_2 -tls-groups
     $ openssl list -tls1_3 -tls-groups
 
-The recommended groups (in order of decreasing performance) for TLS 1.3 are presently:
+The recommended groups for TLS 1.3 are presently documented in the default
+TLS group list in the OpenSSL code base. Starting with OpenSSL 3.5, the
+hybrid algorithm B<X25519MLKEM768> is first in this default list.
+It mitigates against threats from future quantum computers while
+still providing state-of-the-art classical key exchange protection.
 
-B<x25519>,
-B<secp256r1>,
-B<x448>,
-and
-B<secp384r1>.
-
-The stronger security margins of the last two, come at a significant
-performance penalty.
+Further details regarding post-quantum algorithm considerations are documented
+in the HISTORY section below.
 
 An enriched alternative syntax, that enables clients to send multiple keyshares
 and allows servers to prioritise some groups over others, is described in
@@ -248,7 +246,7 @@ See L<openssl-ciphers(1)> for more information.
 =item B<-min_protocol> I<minprot>, B<-max_protocol> I<maxprot>
 
 Sets the minimum and maximum supported protocol.
-Currently supported protocol values are B<SSLv3>, B<TLSv1>, B<TLSv1.1>,
+Currently supported protocol values are B<TLSv1>, B<TLSv1.1>,
 B<TLSv1.2>, B<TLSv1.3> for TLS; B<DTLSv1>, B<DTLSv1.2> for DTLS, and B<None>
 for no limit.
 If either the lower or upper bound is not specified then only the other bound
@@ -311,11 +309,14 @@ operations are permitted.
 
 =item B<-no_ssl3>, B<-no_tls1>, B<-no_tls1_1>, B<-no_tls1_2>, B<-no_tls1_3>
 
-Disables protocol support for SSLv3, TLSv1.0, TLSv1.1, TLSv1.2 or TLSv1.3 by
-setting the corresponding options B<SSL_OP_NO_SSLv3>, B<SSL_OP_NO_TLSv1>,
+Disables protocol support for TLSv1.0, TLSv1.1, TLSv1.2 or TLSv1.3 by
+setting the corresponding options B<SSL_OP_NO_TLSv1>,
 B<SSL_OP_NO_TLSv1_1>, B<SSL_OP_NO_TLSv1_2> and B<SSL_OP_NO_TLSv1_3>
 respectively. These options are deprecated, use B<-min_protocol> and
 B<-max_protocol> instead.
+
+Note that B<-no_ssl3> is a no-op since support for SSLv3 was removed in OpenSSL
+4.0.
 
 =item B<-anti_replay>, B<-no_anti_replay>
 
@@ -495,7 +496,7 @@ This is a synonym for the "Groups" command.
 
 This sets the minimum supported SSL, TLS or DTLS version.
 
-Currently supported protocol values are B<SSLv3>, B<TLSv1>, B<TLSv1.1>,
+Currently supported protocol values are B<TLSv1>, B<TLSv1.1>,
 B<TLSv1.2>, B<TLSv1.3>, B<DTLSv1> and B<DTLSv1.2>.
 The SSL and TLS bounds apply only to TLS-based contexts, while the DTLS bounds
 apply only to DTLS-based contexts.
@@ -507,7 +508,7 @@ The value B<None> applies to both types of contexts and disables the limits.
 
 This sets the maximum supported SSL, TLS or DTLS version.
 
-Currently supported protocol values are B<SSLv3>, B<TLSv1>, B<TLSv1.1>,
+Currently supported protocol values are B<TLSv1>, B<TLSv1.1>,
 B<TLSv1.2>, B<TLSv1.3>, B<DTLSv1> and B<DTLSv1.2>.
 The SSL and TLS bounds apply only to TLS-based contexts, while the DTLS bounds
 apply only to DTLS-based contexts.
@@ -530,7 +531,7 @@ effect.
 Only enabling some protocol versions does not disable the other protocol
 versions.
 
-Currently supported protocol values are B<SSLv3>, B<TLSv1>, B<TLSv1.1>,
+Currently supported protocol values are B<TLSv1>, B<TLSv1.1>,
 B<TLSv1.2>, B<TLSv1.3>, B<DTLSv1> and B<DTLSv1.2>.
 The special value B<ALL> refers to all supported versions.
 
@@ -562,7 +563,7 @@ B<Compression>: SSL/TLS compression support, disabled by default. Inverse
 of B<SSL_OP_NO_COMPRESSION>.
 
 B<EmptyFragments>: use empty fragments as a countermeasure against a
-SSL 3.0/TLS 1.0 protocol vulnerability affecting CBC ciphers. It
+TLS 1.0 protocol vulnerability affecting CBC ciphers. It
 is set by default. Inverse of B<SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS>.
 
 B<Bugs>: enable various bug workarounds. Same as B<SSL_OP_ALL>.
@@ -575,7 +576,7 @@ B<SSL_OP_ECDH_SINGLE>. Only used by servers.
 
 B<ServerPreference>: use server and not client preference order when
 determining which cipher suite, signature algorithm or elliptic curve
-(TLS 1.2) or group (TSL 1.3) to use for an incoming connection.
+(TLS 1.2) or group (TLS 1.3) to use for an incoming connection.
 Equivalent to B<SSL_OP_SERVER_PREFERENCE>. Only used by servers.
 
 B<PrioritizeChaCha>: prioritizes ChaCha ciphers when the client has a
@@ -730,16 +731,15 @@ argument.
 The order of operations is significant. This can be used to set either defaults
 or values which cannot be overridden. For example if an application calls:
 
- SSL_CONF_cmd(ctx, "Protocol", "-SSLv3");
+ SSL_CONF_cmd(ctx, "Protocol", "-TLSv1");
  SSL_CONF_cmd(ctx, userparam, uservalue);
 
-it will disable SSLv3 support by default but the user can override it. If
+it will disable TLSv1 support by default but the user can override it. If
 however the call sequence is:
 
  SSL_CONF_cmd(ctx, userparam, uservalue);
- SSL_CONF_cmd(ctx, "Protocol", "-SSLv3");
-
-SSLv3 is B<always> disabled and attempt to override this by the user are
+ SSL_CONF_cmd(ctx, "Protocol", "-TLSv1");
+TLSv1 is B<always> disabled and attempt to override this by the user are
 ignored.
 
 By checking the return code of SSL_CONF_cmd() it is possible to query if a
@@ -794,22 +794,22 @@ Set supported signature algorithms:
 
 There are various ways to select the supported protocols.
 
-This set the minimum protocol version to TLSv1, and so disables SSLv3.
+This sets the minimum protocol version to TLSv1.1, and so disables TLSv1.
 This is the recommended way to disable protocols.
 
- SSL_CONF_cmd(ctx, "MinProtocol", "TLSv1");
+ SSL_CONF_cmd(ctx, "MinProtocol", "TLSv1.1");
 
-The following also disables SSLv3:
+The following also disables TLSv1:
 
- SSL_CONF_cmd(ctx, "Protocol", "-SSLv3");
+ SSL_CONF_cmd(ctx, "Protocol", "-TLSv1");
 
 The following will first enable all protocols, and then disable
-SSLv3.
+TLSv1.
 If no protocol versions were disabled before this has the same effect as
-"-SSLv3", but if some versions were disables this will re-enable them before
-disabling SSLv3.
+"-TLSv1", but if some versions were disables this will re-enable them before
+disabling TLSv1.
 
- SSL_CONF_cmd(ctx, "Protocol", "ALL,-SSLv3");
+ SSL_CONF_cmd(ctx, "Protocol", "ALL,-TLSv1");
 
 Only enable TLSv1.2:
 
@@ -865,12 +865,12 @@ added in OpenSSL 3.2.
 
 B<PreferNoDHEKEX> was added in OpenSSL 3.3.
 
-OpenSSL 3.5 introduces support for post-quantum (PQ) TLS key exchange via the
+OpenSSL 3.5 introduced support for post-quantum (PQ) TLS key exchange via the
 B<MLKEM512>, B<MLKEM768> and B<MLKEM1024> TLS groups.
 These are based on the underlying B<ML-KEM-512>, B<ML-KEM-768> and
 B<ML-KEM-1024> algorithms from FIPS 203.
 
-OpenSSL 3.5 also introduces support for three B<hybrid> ECDH PQ key exchange
+OpenSSL 3.5 also introduced support for three B<hybrid> ECDH PQ key exchange
 TLS groups: B<X25519MLKEM768>, B<SecP256r1MLKEM768> and
 B<SecP384r1MLKEM1024>.
 They offer CPU performance comparable to the associated ECDH group, though at
@@ -881,11 +881,15 @@ group.
 Also its key exchange messages at close to 1700 bytes are larger than the
 roughly 1200 bytes for the first two groups.
 
+OpenSSL 4.0 introduced the B<curveSM2> (also known as C<ECDHE over SM2>) key
+exchange group as specified in RFC8998, and B<curveSM2MLKEM768>, which is a
+hybrid of the B<curveSM2> group with B<ML-KEM-768>.
+
 As of OpenSSL 3.5 key exchange group names are case-insensitive.
 
 =head1 COPYRIGHT
 
-Copyright 2012-2025 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2012-2026 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

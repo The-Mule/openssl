@@ -30,7 +30,7 @@ static int bn_is_prime_int(const BIGNUM *w, int checks, BN_CTX *ctx,
 #define square(x) ((BN_ULONG)(x) * (BN_ULONG)(x))
 
 #if BN_BITS2 == 64
-#define BN_DEF(lo, hi) (BN_ULONG) hi << 32 | lo
+#define BN_DEF(lo, hi) (BN_ULONG)hi << 32 | lo
 #else
 #define BN_DEF(lo, hi) lo, hi
 #endif
@@ -420,7 +420,7 @@ int ossl_bn_miller_rabin_is_prime(const BIGNUM *w, int iterations, BN_CTX *ctx,
         /* (Step 4.7) for j = 1 to a-1 */
         for (j = 1; j < a; ++j) {
             /* (Step 4.7.1 - 4.7.2) x = z. z = x^2 mod w */
-            if (!BN_copy(x, z) || !BN_mod_mul(z, x, x, w, ctx))
+            if (BN_copy(x, z) == NULL || !BN_mod_mul(z, x, x, w, ctx))
                 goto err;
             /* (Step 4.7.3) */
             if (BN_cmp(z, w1) == 0)
@@ -431,13 +431,13 @@ int ossl_bn_miller_rabin_is_prime(const BIGNUM *w, int iterations, BN_CTX *ctx,
         }
         /* At this point z = b^((w-1)/2) mod w */
         /* (Steps 4.8 - 4.9) x = z, z = x^2 mod w */
-        if (!BN_copy(x, z) || !BN_mod_mul(z, x, x, w, ctx))
+        if (BN_copy(x, z) == NULL || !BN_mod_mul(z, x, x, w, ctx))
             goto err;
         /* (Step 4.10) */
         if (BN_is_one(z))
             goto composite;
         /* (Step 4.11) x = b^(w-1) mod w */
-        if (!BN_copy(x, z))
+        if (BN_copy(x, z) == NULL)
             goto err;
     composite:
         if (enhanced) {

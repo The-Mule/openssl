@@ -48,7 +48,8 @@ long PKCS7_ctrl(PKCS7 *p7, int cmd, long larg, char *parg)
         break;
     case PKCS7_OP_GET_DETACHED_SIGNATURE:
         if (nid == NID_pkcs7_signed) {
-            if (p7->d.sign == NULL || p7->d.sign->contents->d.ptr == NULL)
+            if (p7->d.sign == NULL || p7->d.sign->contents == NULL
+                || p7->d.sign->contents->d.ptr == NULL)
                 ret = 1;
             else
                 ret = 0;
@@ -536,7 +537,7 @@ int PKCS7_set_digest(PKCS7 *p7, const EVP_MD *md)
     }
 
     ERR_raise(ERR_LIB_PKCS7, PKCS7_R_WRONG_CONTENT_TYPE);
-    return 1;
+    return 0;
 }
 
 STACK_OF(PKCS7_SIGNER_INFO) *PKCS7_get_signer_info(PKCS7 *p7)
@@ -742,6 +743,10 @@ int PKCS7_stream(unsigned char ***boundary, PKCS7 *p7)
         break;
 
     case NID_pkcs7_signed:
+        if (p7->d.sign == NULL || p7->d.sign->contents == NULL) {
+            ERR_raise(ERR_LIB_PKCS7, PKCS7_R_NO_CONTENT);
+            break;
+        }
         os = p7->d.sign->contents->d.data;
         break;
 

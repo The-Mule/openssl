@@ -26,7 +26,7 @@ $sp="%r15";
 $stdframe=16*$SIZE_T+4*8;
 
 $code=<<___;
-#include "s390x_arch.h"
+#include "arch/s390x_arch.h"
 
 .text
 
@@ -526,6 +526,11 @@ s390x_flip_endian64:
 .size	s390x_flip_endian64,.-s390x_flip_endian64
 ___
 }
+
+$code.=<<___;
+.section	.init
+	brasl	$ra,OPENSSL_cpuid_setup
+___
 
 $code =~ s/\`([^\`]*)\`/eval $1/gem;
 print $code;

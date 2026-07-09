@@ -1,5 +1,5 @@
 /*
- * Copyright 2024-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2024-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -20,6 +20,9 @@
 #include "prov/providercommon.h"
 #include "prov/provider_ctx.h"
 #include "prov/ml_dsa.h"
+
+#define ml_dsa_export_params
+#define ml_dsa_export_params_decoder
 #include "providers/implementations/keymgmt/ml_dsa_kmgmt.inc"
 
 static OSSL_FUNC_keymgmt_free_fn ml_dsa_free_key;
@@ -27,8 +30,8 @@ static OSSL_FUNC_keymgmt_has_fn ml_dsa_has;
 static OSSL_FUNC_keymgmt_match_fn ml_dsa_match;
 static OSSL_FUNC_keymgmt_import_fn ml_dsa_import;
 static OSSL_FUNC_keymgmt_export_fn ml_dsa_export;
-static OSSL_FUNC_keymgmt_import_types_fn ml_dsa_imexport_types;
-static OSSL_FUNC_keymgmt_export_types_fn ml_dsa_imexport_types;
+static OSSL_FUNC_keymgmt_import_types_fn ml_dsa_import_types;
+static OSSL_FUNC_keymgmt_export_types_fn ml_dsa_export_types;
 static OSSL_FUNC_keymgmt_dup_fn ml_dsa_dup_key;
 static OSSL_FUNC_keymgmt_gettable_params_fn ml_dsa_gettable_params;
 static OSSL_FUNC_keymgmt_validate_fn ml_dsa_validate;
@@ -61,7 +64,8 @@ static int ml_dsa_pairwise_test(const ML_DSA_KEY *key)
     int ret = 0;
 
     if (!ml_dsa_has(key, OSSL_KEYMGMT_SELECT_KEYPAIR)
-        || ossl_fips_self_testing())
+        || ossl_fips_self_testing()
+        || ossl_self_test_in_progress(ST_ID_ASYM_KEYGEN_ML_DSA))
         return 1;
 
     /*
@@ -106,6 +110,12 @@ ML_DSA_KEY *ossl_prov_ml_dsa_new(PROV_CTX *ctx, const char *propq, int evp_type)
 
     if (!ossl_prov_is_running())
         return 0;
+
+#ifdef FIPS_MODULE
+    if (!ossl_deferred_self_test(PROV_LIBCTX_OF(ctx),
+            ST_ID_ASYM_KEYGEN_ML_DSA))
+        return NULL;
+#endif
 
     key = ossl_ml_dsa_key_new(PROV_LIBCTX_OF(ctx), propq, evp_type);
     /*
@@ -197,15 +207,15 @@ static int ml_dsa_key_fromdata(ML_DSA_KEY *key, const OSSL_PARAM params[],
     const ML_DSA_PARAMS *key_params = ossl_ml_dsa_key_params(key);
     const uint8_t *pk = NULL, *sk = NULL, *seed = NULL;
     size_t pk_len = 0, sk_len = 0, seed_len = 0;
-    struct ml_dsa_key_type_params_st p;
+    struct ml_dsa_import_params_st p;
 
-    if (!ml_dsa_key_type_params_decoder(params, &p))
+    if (!ml_dsa_import_params_decoder(params, &p))
         return 0;
 
     if (p.pubkey != NULL) {
         if (!OSSL_PARAM_get_octet_string_ptr(p.pubkey, (const void **)&pk, &pk_len))
             return 0;
-        if (pk != NULL && pk_len != key_params->pk_len) {
+        if (pk_len != 0 && pk_len != key_params->pk_len) {
             ERR_raise_data(ERR_LIB_PROV, PROV_R_INVALID_KEY_LENGTH,
                 "Invalid %s public key length", key_params->alg);
             return 0;
@@ -217,7 +227,7 @@ static int ml_dsa_key_fromdata(ML_DSA_KEY *key, const OSSL_PARAM params[],
         if (!OSSL_PARAM_get_octet_string_ptr(p.seed, (const void **)&seed,
                 &seed_len))
             return 0;
-        if (seed != NULL && seed_len != ML_DSA_SEED_BYTES) {
+        if (seed_len != 0 && seed_len != ML_DSA_SEED_BYTES) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_SEED_LENGTH);
             return 0;
         }
@@ -228,7 +238,7 @@ static int ml_dsa_key_fromdata(ML_DSA_KEY *key, const OSSL_PARAM params[],
         if (!OSSL_PARAM_get_octet_string_ptr(p.privkey, (const void **)&sk,
                 &sk_len))
             return 0;
-        if (sk != NULL && sk_len != key_params->sk_len) {
+        if (sk_len != 0 && sk_len != key_params->sk_len) {
             ERR_raise_data(ERR_LIB_PROV, PROV_R_INVALID_KEY_LENGTH,
                 "Invalid %s private key length",
                 key_params->alg);
@@ -242,6 +252,12 @@ static int ml_dsa_key_fromdata(ML_DSA_KEY *key, const OSSL_PARAM params[],
         return 0;
     }
 
+    if (p.propq != NULL) {
+        if (p.propq->data_type != OSSL_PARAM_UTF8_STRING)
+            return 0;
+        if (!ossl_ml_dsa_key_fetch_digests(key, p.propq->data))
+            return 0;
+    }
     if (seed_len != 0
         && (sk_len == 0
             || (ossl_ml_dsa_key_get_prov_flags(key) & ML_DSA_KEY_PREFER_SEED))) {
@@ -277,8 +293,18 @@ static int ml_dsa_import(void *keydata, int selection, const OSSL_PARAM params[]
     int include_priv;
     int res;
 
+    /*
+     * Once a key is fully initialised (has at least a public component),
+     * further mutation is no longer safe and disallowed.
+     */
     if (!ossl_prov_is_running() || key == NULL)
         return 0;
+    if (ossl_ml_dsa_key_has(key, OSSL_KEYMGMT_SELECT_PUBLIC_KEY)) {
+        /* Invalid attempt to mutate a key. */
+        ERR_raise_data(ERR_LIB_PROV, PROV_R_KEY_IMMUTABLE_ONCE_SET,
+            "Keys are immutable once key material has been loaded or generated");
+        return 0;
+    }
 
     if ((selection & OSSL_KEYMGMT_SELECT_KEYPAIR) == 0)
         return 0;
@@ -288,20 +314,25 @@ static int ml_dsa_import(void *keydata, int selection, const OSSL_PARAM params[]
 #ifdef FIPS_MODULE
     if (res > 0) {
         res = ml_dsa_pairwise_test(key);
-        if (!res) {
+        if (!res)
             ossl_ml_dsa_key_reset(key);
-            ossl_set_error_state(OSSL_SELF_TEST_TYPE_PCT_IMPORT);
-        }
     }
 #endif /* FIPS_MODULE */
     return res;
 }
 
-static const OSSL_PARAM *ml_dsa_imexport_types(int selection)
+static const OSSL_PARAM *ml_dsa_import_types(int selection)
 {
     if ((selection & OSSL_KEYMGMT_SELECT_KEYPAIR) == 0)
         return NULL;
-    return ml_dsa_key_type_params_list;
+    return ml_dsa_import_params_list;
+}
+
+static const OSSL_PARAM *ml_dsa_export_types(int selection)
+{
+    if ((selection & OSSL_KEYMGMT_SELECT_KEYPAIR) == 0)
+        return NULL;
+    return ml_dsa_export_params_list;
 }
 
 static const OSSL_PARAM *ml_dsa_gettable_params(void *provctx)
@@ -485,10 +516,8 @@ static void *ml_dsa_gen(void *genctx, int evp_type)
         goto err;
     }
 #ifdef FIPS_MODULE
-    if (!ml_dsa_pairwise_test(key)) {
-        ossl_set_error_state(OSSL_SELF_TEST_TYPE_PCT);
+    if (!ml_dsa_pairwise_test(key))
         goto err;
-    }
 #endif
     return key;
 err:
@@ -565,9 +594,9 @@ static void ml_dsa_gen_cleanup(void *genctx)
         { OSSL_FUNC_KEYMGMT_HAS, (void (*)(void))ml_dsa_has },                                \
         { OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))ml_dsa_match },                            \
         { OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))ml_dsa_import },                          \
-        { OSSL_FUNC_KEYMGMT_IMPORT_TYPES, (void (*)(void))ml_dsa_imexport_types },            \
+        { OSSL_FUNC_KEYMGMT_IMPORT_TYPES, (void (*)(void))ml_dsa_import_types },              \
         { OSSL_FUNC_KEYMGMT_EXPORT, (void (*)(void))ml_dsa_export },                          \
-        { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))ml_dsa_imexport_types },            \
+        { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))ml_dsa_export_types },              \
         DISPATCH_LOAD_FN { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))ml_dsa_get_params }, \
         { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))ml_dsa_gettable_params },        \
         { OSSL_FUNC_KEYMGMT_VALIDATE, (void (*)(void))ml_dsa_validate },                      \

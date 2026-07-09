@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2002-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -105,7 +105,7 @@ ASN1_SEQUENCE(X9_62_PENTANOMIAL) = {
     ASN1_EMBED(X9_62_PENTANOMIAL, k3, INT32)
 } static_ASN1_SEQUENCE_END(X9_62_PENTANOMIAL)
 
-    DECLARE_ASN1_ALLOC_FUNCTIONS(X9_62_PENTANOMIAL)
+DECLARE_ASN1_ALLOC_FUNCTIONS(X9_62_PENTANOMIAL)
 IMPLEMENT_ASN1_ALLOC_FUNCTIONS(X9_62_PENTANOMIAL)
 
 ASN1_ADB_TEMPLATE(char_two_def) = ASN1_SIMPLE(X9_62_CHARACTERISTIC_TWO, p.other, ASN1_ANY);
@@ -122,7 +122,7 @@ ASN1_SEQUENCE(X9_62_CHARACTERISTIC_TWO) = {
     ASN1_ADB_OBJECT(X9_62_CHARACTERISTIC_TWO)
 } static_ASN1_SEQUENCE_END(X9_62_CHARACTERISTIC_TWO)
 
-    DECLARE_ASN1_ALLOC_FUNCTIONS(X9_62_CHARACTERISTIC_TWO)
+DECLARE_ASN1_ALLOC_FUNCTIONS(X9_62_CHARACTERISTIC_TWO)
 IMPLEMENT_ASN1_ALLOC_FUNCTIONS(X9_62_CHARACTERISTIC_TWO)
 
 ASN1_ADB_TEMPLATE(fieldID_def) = ASN1_SIMPLE(X9_62_FIELDID, p.other, ASN1_ANY);
@@ -137,10 +137,10 @@ ASN1_SEQUENCE(X9_62_FIELDID) = {
     ASN1_ADB_OBJECT(X9_62_FIELDID)
 } static_ASN1_SEQUENCE_END(X9_62_FIELDID)
 
-    ASN1_SEQUENCE(X9_62_CURVE)
+ASN1_SEQUENCE(X9_62_CURVE)
     = { ASN1_SIMPLE(X9_62_CURVE, a, ASN1_OCTET_STRING), ASN1_SIMPLE(X9_62_CURVE, b, ASN1_OCTET_STRING), ASN1_OPT(X9_62_CURVE, seed, ASN1_BIT_STRING) } static_ASN1_SEQUENCE_END(X9_62_CURVE)
 
-        ASN1_SEQUENCE(ECPARAMETERS)
+ASN1_SEQUENCE(ECPARAMETERS)
     = { ASN1_EMBED(ECPARAMETERS, version, INT32), ASN1_SIMPLE(ECPARAMETERS, fieldID, X9_62_FIELDID), ASN1_SIMPLE(ECPARAMETERS, curve, X9_62_CURVE), ASN1_SIMPLE(ECPARAMETERS, base, ASN1_OCTET_STRING), ASN1_SIMPLE(ECPARAMETERS, order, ASN1_INTEGER), ASN1_OPT(ECPARAMETERS, cofactor, ASN1_INTEGER) } ASN1_SEQUENCE_END(ECPARAMETERS)
 
 DECLARE_ASN1_ALLOC_FUNCTIONS(ECPARAMETERS)
@@ -163,7 +163,7 @@ ASN1_SEQUENCE(EC_PRIVATEKEY) = {
     ASN1_EXP_OPT(EC_PRIVATEKEY, publicKey, ASN1_BIT_STRING, 1)
 } static_ASN1_SEQUENCE_END(EC_PRIVATEKEY)
 
-    DECLARE_ASN1_FUNCTIONS(EC_PRIVATEKEY)
+DECLARE_ASN1_FUNCTIONS(EC_PRIVATEKEY)
 DECLARE_ASN1_ENCODE_FUNCTIONS_name(EC_PRIVATEKEY, EC_PRIVATEKEY)
 IMPLEMENT_ASN1_FUNCTIONS(EC_PRIVATEKEY)
 
@@ -348,9 +348,8 @@ static int ec_asn1_group2curve(const EC_GROUP *group, X9_62_CURVE *curve)
                 ERR_raise(ERR_LIB_EC, ERR_R_ASN1_LIB);
                 goto err;
             }
-        ossl_asn1_string_set_bits_left(curve->seed, 0);
-        if (!ASN1_BIT_STRING_set(curve->seed, group->seed,
-                (int)group->seed_len)) {
+        if (!ASN1_BIT_STRING_set1(curve->seed, group->seed,
+                (int)group->seed_len, 0)) {
             ERR_raise(ERR_LIB_EC, ERR_R_ASN1_LIB);
             goto err;
         }
@@ -888,6 +887,14 @@ EC_GROUP *d2i_ECPKParameters(EC_GROUP **a, const unsigned char **in, long len)
 
     if (params->type == ECPKPARAMETERS_TYPE_EXPLICIT)
         group->decoded_from_explicit_params = 1;
+#ifdef OPENSSL_NO_EC_EXPLICIT_CURVES
+    if (EC_GROUP_check_named_curve(group, 0, NULL) == NID_undef) {
+        EC_GROUP_free(group);
+        ECPKPARAMETERS_free(params);
+        ERR_raise(ERR_LIB_EC, EC_R_UNKNOWN_GROUP);
+        return NULL;
+    }
+#endif
 
     if (a) {
         EC_GROUP_free(*a);
@@ -947,6 +954,13 @@ EC_KEY *d2i_ECPrivateKey(EC_KEY **a, const unsigned char **in, long len)
         ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
         goto err;
     }
+
+#ifdef OPENSSL_NO_EC_EXPLICIT_CURVES
+    if (EC_GROUP_check_named_curve(ret->group, 0, NULL) == NID_undef) {
+        ERR_raise(ERR_LIB_EC, EC_R_UNKNOWN_GROUP);
+        goto err;
+    }
+#endif
 
     ret->version = priv_key->version;
 
@@ -1056,7 +1070,7 @@ int i2d_ECPrivateKey(const EC_KEY *a, unsigned char **out)
             goto err;
         }
 
-        ossl_asn1_string_set_bits_left(priv_key->publicKey, 0);
+        ossl_asn1_bit_string_set_unused_bits(priv_key->publicKey, 0);
         ASN1_STRING_set0(priv_key->publicKey, pub, (int)publen);
         pub = NULL;
     }
@@ -1070,7 +1084,7 @@ err:
     OPENSSL_clear_free(priv, privlen);
     OPENSSL_free(pub);
     EC_PRIVATEKEY_free(priv_key);
-    return (ok ? ret : 0);
+    return ok ? ret : 0;
 }
 
 int i2d_ECParameters(const EC_KEY *a, unsigned char **out)

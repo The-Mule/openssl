@@ -1,11 +1,14 @@
 /*
- * Copyright 2016-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
+
+#if !defined(OSSL_LIBCRYPTO_STORE_STORE_LOCAL_H)
+#define OSSL_LIBCRYPTO_STORE_STORE_LOCAL_H
 
 #include <openssl/core_dispatch.h>
 #include "internal/thread_once.h"
@@ -54,7 +57,7 @@ struct ossl_store_search_st {
      * Used by OSSL_STORE_SEARCH_BY_NAME and
      * OSSL_STORE_SEARCH_BY_ISSUER_SERIAL
      */
-    X509_NAME *name;
+    const X509_NAME *name;
 
     /* Used by OSSL_STORE_SEARCH_BY_ISSUER_SERIAL */
     const ASN1_INTEGER *serial;
@@ -101,6 +104,7 @@ struct ossl_store_loader_st {
     const char *propdef;
     const char *description;
 
+    int no_store;
     CRYPTO_REF_COUNT refcnt;
 
     OSSL_FUNC_store_open_fn *p_open;
@@ -175,3 +179,5 @@ struct ossl_load_result_data_st {
     OSSL_STORE_CTX *ctx;
 };
 OSSL_CALLBACK ossl_store_handle_load_result;
+
+#endif /* !defined(OSSL_LIBCRYPTO_STORE_STORE_LOCAL_H) */

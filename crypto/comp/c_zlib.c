@@ -1,5 +1,5 @@
 /*
- * Copyright 1998-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1998-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/objects.h>
+#include "internal/e_os.h"
 #include "internal/comp.h"
 #include <openssl/err.h>
 #include "crypto/cryptlib.h"
@@ -64,10 +65,6 @@ static COMP_METHOD zlib_stateful_method = {
  * work.  Therefore, all ZLIB routines are loaded at run time
  * and we do not link to a .LIB file when ZLIB_SHARED is set.
  */
-#if defined(OPENSSL_SYS_WINDOWS) || defined(OPENSSL_SYS_WIN32)
-#include <windows.h>
-#endif /* !(OPENSSL_SYS_WINDOWS || \
-        * OPENSSL_SYS_WIN32) */
 
 #ifdef ZLIB_SHARED
 #include "internal/dso.h"
@@ -284,7 +281,7 @@ DEFINE_RUN_ONCE_STATIC(ossl_comp_zlib_init)
     zlib_dso = DSO_load(NULL, LIBZ, NULL, 0);
     if (zlib_dso != NULL) {
         p_compress = (compress_ft)DSO_bind_func(zlib_dso, "compress");
-        p_uncompress = (compress_ft)DSO_bind_func(zlib_dso, "uncompress");
+        p_uncompress = (uncompress_ft)DSO_bind_func(zlib_dso, "uncompress");
         p_inflateEnd = (inflateEnd_ft)DSO_bind_func(zlib_dso, "inflateEnd");
         p_inflate = (inflate_ft)DSO_bind_func(zlib_dso, "inflate");
         p_inflateInit_ = (inflateInit__ft)DSO_bind_func(zlib_dso, "inflateInit_");
@@ -292,14 +289,14 @@ DEFINE_RUN_ONCE_STATIC(ossl_comp_zlib_init)
         p_deflate = (deflate_ft)DSO_bind_func(zlib_dso, "deflate");
         p_deflateInit_ = (deflateInit__ft)DSO_bind_func(zlib_dso, "deflateInit_");
         p_zError = (zError__ft)DSO_bind_func(zlib_dso, "zError");
+    }
 
-        if (p_compress == NULL || p_uncompress == NULL || p_inflateEnd == NULL
-            || p_inflate == NULL || p_inflateInit_ == NULL
-            || p_deflateEnd == NULL || p_deflate == NULL
-            || p_deflateInit_ == NULL || p_zError == NULL) {
-            ossl_comp_zlib_cleanup();
-            return 0;
-        }
+    if (p_compress == NULL || p_uncompress == NULL || p_inflateEnd == NULL
+        || p_inflate == NULL || p_inflateInit_ == NULL
+        || p_deflateEnd == NULL || p_deflate == NULL
+        || p_deflateInit_ == NULL || p_zError == NULL) {
+        ossl_comp_zlib_cleanup();
+        return 0;
     }
 #endif
     return 1;

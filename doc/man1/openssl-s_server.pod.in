@@ -135,6 +135,12 @@ B<openssl> B<s_server>
 {- $OpenSSL::safe::opt_provider_synopsis -}
 [B<-enable_server_rpk>]
 [B<-enable_client_rpk>]
+[B<-expected-rpks>]
+[B<-ech_key> I<filename>]
+[B<-ech_dir> I<dirname>]
+[B<-ech_noretry_dir> I<dirname>]
+[B<-ech_trialdecrypt>]
+[B<-ech_greaseretries>]
 
 =head1 DESCRIPTION
 
@@ -335,8 +341,11 @@ Download CRLs from distribution points given in CDP extensions of certificates
 
 =item B<-verifyCAfile> I<filename>
 
-A file in PEM format CA containing trusted certificates to use
-for verifying client certificates.
+A file in PEM format containing trusted CA certificates (root and/or
+intermediate) used to verify the client certificate chain.
+
+This and the following two options, B<-verifyCApath> and B<-verifyCAstore>,
+take precedence over the B<-CAfile>, B<-CApath>, and B<-CAstore> options.
 
 =item B<-verifyCApath> I<dir>
 
@@ -347,13 +356,25 @@ see L<openssl-verify(1)> for more information.
 
 =item B<-verifyCAstore> I<uri>
 
-The URI of a store containing trusted certificates to use
+URI of a store containing trusted certificates to use
 for verifying client certificates.
+The URI may indicate a single certificate, as well as a collection of them.
+With URIs in the C<file:> scheme, this is generally treated like B<-verifyCApath> or
+B<-verifyCAfile>, depending on whether the URI points to a directory or a single file.
+See L<ossl_store(7)> for more information on stores and supported schemes.
+
+Note that B<-CAfile> is the sole source of acceptable issuing
+CA names sent to the client in the Certificate Request message during the
+handshake; B<-CApath>, B<-CAstore>, and the B<-verifyCA*> options do not
+contribute to this list.
 
 =item B<-chainCAfile> I<file>
 
 A file in PEM format containing trusted certificates to use
 when attempting to build the server certificate chain.
+
+This and the following two options, B<-chainCApath> and B<-chainCAstore>,
+take precedence over the B<-CAfile>, B<-CApath>, and B<-CAstore> options.
 
 =item B<-chainCApath> I<dir>
 
@@ -367,10 +388,9 @@ see L<openssl-verify(1)> for more information.
 The URI of a store containing trusted certificates to use
 for building the server certificate chain provided to the client.
 The URI may indicate a single certificate, as well as a collection of them.
-With URIs in the C<file:> scheme, this acts as B<-chainCAfile> or
-B<-chainCApath>, depending on if the URI indicates a directory or a
-single file.
-See L<ossl_store-file(7)> for more information on the C<file:> scheme.
+With URIs in the C<file:> scheme, this is generally treated like B<-chainCApath> or
+B<-chainCAfile>, depending on whether the URI points to a directory or a single file.
+See L<ossl_store(7)> for more information on stores and supported schemes.
 
 =item B<-nocert>
 
@@ -769,6 +789,10 @@ has been negotiated, and early data is enabled on the server. A full handshake
 is forced if a session ticket is used a second or subsequent time. Any early
 data that was sent will be rejected.
 
+Note that the server manages an internal cache of session tickets. If a client
+closes the connection without sending the close_notify alert, the
+corresponding session ticket is removed and a full handshake is forced.
+
 =item B<-tfo>
 
 Enable acceptance of TCP Fast Open (RFC7413) connections.
@@ -786,6 +810,17 @@ Pre-compresses certificates (RFC8879) that will be sent during the handshake.
 {- $OpenSSL::safe::opt_x_item -}
 
 {- $OpenSSL::safe::opt_trust_item -}
+
+The certificates loaded via the B<-CAfile>, B<-CApath>, and B<-CAstore> options
+are used as trust anchors when verifying client certificates unless
+overridden by B<-verifyCAfile>, B<-verifyCApath>, or B<-verifyCAstore> options.
+They are also used as trust anchors when attempting
+to build the server certificate chain provided to clients unless
+overridden by B<-chainCAfile>, B<-chainCApath>, or B<-chainCAstore> options.
+
+B<-CAfile> also determines the list of acceptable issuing CA names
+sent to the client in the Certificate Request message during the handshake;
+B<-CApath>, B<-CAstore>, and the B<-verifyCA*> options do not contribute here.
 
 {- $OpenSSL::safe::opt_r_item -}
 
@@ -815,7 +850,50 @@ support raw public keys may elect to use them.
 Clients that don't support raw public keys or prefer to use X.509
 certificates can still elect to send X.509 certificates as usual.
 
-Raw public keys are extracted from the configured certificate/private key.
+=item B<-expected-rpks> I<file>
+
+This option implies the B<-enable_client_rpk> option and can be specified
+multiple times.
+Each PEM I<file> should contain one or more public keys, private keys or
+certificates.
+With a private key or certificate an attempt is made to extract the associated
+public key.
+Each resulting public key is added (via a call to L<SSL_add_expected_rpk(3)> as
+a valid raw public key that the client may present to be considered verified.
+If a client nevertheless presents an X.509 certificate, the enclosed public key
+is validated as though it were presented as a raw public key instead.
+
+Verification success or failure is reported as a DANE verification success or
+failure, because verification of raw public keys is internally mapped to
+verification of DANE TLSA records derived from the specified keys.
+
+=item I<host>:I<port>
+
+=item B<-ech_key> I<filename>
+
+Load one Encrypted Client Hello (ECH) key pair.
+
+=item B<-ech_dir> I<dirname>
+
+Attempt to load an ECH key pair from every file in the named directory.
+Any keys successfully loaded will be returned in 'retry_configs'.
+
+=item B<-ech_noretry_dir> I<dirname>
+
+Attempt to load an ECH key pair from every file in the named directory.
+Keys loaded will not be returned in 'retry_configs'.
+
+=item B<-ech_trialdecrypt>
+
+When an Encrypted Client Hello (ECH) extension is seen in a ClientHello,
+attempt to decrypt with all known ECH private keys if necessary. Without
+this, the ECH "config_id" is used to match against the loaded ECH private
+keys and decryption is only attempted when there's a match.
+
+=item B<-ech_greaseretries>
+
+If set, servers will add GREASEy ECHConfig values to those sent
+in retry_configs.
 
 =back
 
@@ -909,7 +987,7 @@ L<SSL_CONF_cmd(3)>,
 L<SSL_CTX_set_max_send_fragment(3)>,
 L<SSL_CTX_set_split_send_fragment(3)>,
 L<SSL_CTX_set_max_pipelines(3)>,
-L<ossl_store-file(7)>
+L<ossl_store(7)>
 
 =head1 HISTORY
 
@@ -931,11 +1009,15 @@ options were added in OpenSSL 3.2.
 
 The B<-status_all> option was added in OpenSSL 3.6.
 
-The B<engine> option was removed in OpenSSL 4.0.
+The B<ech> options were added in OpenSSL 4.0.
+
+The B<-engine> option was removed in OpenSSL 4.0.
+
+The B<-expected-rpks> option was added in OpenSSL 4.0.
 
 =head1 COPYRIGHT
 
-Copyright 2000-2025 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2026 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

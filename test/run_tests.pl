@@ -26,6 +26,7 @@ use File::Basename;
 use FindBin;
 use lib "$FindBin::Bin/../util/perl";
 use OpenSSL::Glob;
+use Scalar::Util qw(looks_like_number);
 
 my $srctop = $ENV{SRCTOP} || $ENV{TOP};
 my $bldtop = $ENV{BLDTOP} || $ENV{TOP};
@@ -46,7 +47,7 @@ if (!defined($jobs)) {
     }
     if (!defined($cpus) && -r "/proc/cpuinfo") {
         # Smells like Linux or something else attempting bug for bug
-        # compatibilty with the /proc paradigm.
+        # compatibility with the /proc paradigm.
         my $tmp = qx(grep -c ^processor /proc/cpuinfo 2>/dev/null);
         if ($? == 0 && $tmp > 0) {
             $cpus = $tmp;
@@ -77,12 +78,24 @@ $ENV{CTLOG_FILE} = rel2abs(catfile($srctop, "test", "ct", "log_list.cnf"));
 # some situations.
 $ENV{'MALLOC_PERTURB_'} = '128' if !defined $ENV{'MALLOC_PERTURB_'};
 
+my $tap_verbosity = exists $ENV{'HARNESS_VERBOSE'} ? $ENV{'HARNESS_VERBOSE'} : 0;
+# If $tap_verbosity looks like a number, keep its value.  Otherwise, enforce a
+# numeric value for its truthiness.
+$tap_verbosity =
+    looks_like_number($tap_verbosity)
+    ? $tap_verbosity
+    : ($tap_verbosity ? 1 : 0);
+# Show test times by default, unless we have lowered verbosity (HARNESS_VERBOSE value < 0).
+my $tap_timer =  ($tap_verbosity >= 0) ? 1 : 0;
+# But also ensure HARNESS_TIMER is respected if it is set.
+$tap_timer = exists $ENV{'HARNESS_TIMER'} ? $ENV{'HARNESS_TIMER'} : $tap_timer;
+
 my %tapargs =
-    ( verbosity         => $ENV{HARNESS_VERBOSE} ? 1 : 0,
+    ( verbosity         => $tap_verbosity,
       lib               => [ $libdir ],
       switches          => '-w',
       merge             => 1,
-      timer             => $ENV{HARNESS_TIMER} ? 1 : 0,
+      timer             => $tap_timer,
     );
 
 if ($jobs > 1) {
@@ -115,6 +128,7 @@ open $openssl_args{'tap_copy'}, ">$outfilename"
 
 my @alltests = find_matching_tests("*");
 my %tests = ();
+my $has_nonexistent_test = 0;
 
 sub reorder {
     my $key = pop;
@@ -139,6 +153,7 @@ foreach my $arg (@ARGV ? @ARGV : ('alltests')) {
         warn "'alltests' encountered, ignoring everything before that...\n"
             unless $initial_arg;
         %tests = map { $_ => 1 } @alltests;
+        $has_nonexistent_test = 0;
     } elsif ($arg =~ m/^(-?)(.*)/) {
         my $sign = $1;
         my $test = $2;
@@ -149,10 +164,12 @@ foreach my $arg (@ARGV ? @ARGV : ('alltests')) {
             %tests = map { $_ => 1 } @alltests;
         }
 
+        # Flag non-existent test so we can return an error
         if (scalar @matches == 0) {
             warn "Test $test found no match, skipping ",
                 ($sign eq '-' ? "removal" : "addition"),
                 "...\n";
+            $has_nonexistent_test = 1 unless $sign eq '-';
         } else {
             foreach $test (@matches) {
                 if ($sign eq '-') {
@@ -378,9 +395,10 @@ if (ref($ret) ne "TAP::Parser::Aggregator" || !$ret->has_errors) {
 
 # If this is a TAP::Parser::Aggregator, $ret->has_errors is the count of
 # tests that failed.  We don't bother with that exact number, just exit
-# with an appropriate exit code when it isn't zero.
+# with an appropriate exit code when it isn't zero. We also return an error
+# if attempting to run a non-existent test.
 if (ref($ret) eq "TAP::Parser::Aggregator") {
-    exit 0 unless $ret->has_errors;
+    exit 0 unless $ret->has_errors || $has_nonexistent_test;
     exit 1 unless $^O eq 'VMS';
     # On VMS, perl converts an exit 1 to SS$_ABORT (%SYSTEM-F-ABORT), which
     # is a bit harsh.  As per perl recommendations, we explicitly use the
@@ -396,4 +414,6 @@ if (ref($ret) eq "TAP::Parser::Aggregator") {
 
 # If this isn't a TAP::Parser::Aggregator, it's the pre-TAP test harness,
 # which simply dies at the end if any test failed, so we don't need to bother
-# with any exit code in that case.
+# with any exit code in that case. The only exception is if we have a
+# non-existent test).
+exit 1 if $has_nonexistent_test;

@@ -55,7 +55,7 @@
 # Câmara, D.; Gouvêa, C. P. L.; López, J. & Dahab, R.: Fast Software
 # Polynomial Multiplication on ARM Processors using the NEON Engine.
 #
-# http://conradoplg.cryptoland.net/files/2010/12/mocrysen13.pdf
+# https://conradoplg.modp.net/files/2010/12/mocrysen13.pdf
 
 # ====================================================================
 # Note about "528B" variant. In ARM case it makes lesser sense to
@@ -142,7 +142,7 @@ ___
 }
 
 $code=<<___;
-#include "arm_arch.h"
+#include "arch/arm_arch.h"
 
 #if defined(__thumb2__) || defined(__clang__)
 .syntax	unified
@@ -296,6 +296,7 @@ $code.=<<___;
 
 .global	gcm_gmult_4bit
 .type	gcm_gmult_4bit,%function
+.align	4
 gcm_gmult_4bit:
 	stmdb	sp!,{r4-r11,lr}
 	ldrb	$nlo,[$Xi,#15]

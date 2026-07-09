@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -150,7 +150,7 @@ static uint32_t ossl_get_max_early_data(SSL_CONNECTION *s)
 static int ossl_early_data_count_ok(SSL_CONNECTION *s, size_t length,
     size_t overhead, int send)
 {
-    uint32_t max_early_data;
+    uint64_t max_early_data;
 
     max_early_data = ossl_get_max_early_data(s);
 
@@ -161,7 +161,7 @@ static int ossl_early_data_count_ok(SSL_CONNECTION *s, size_t length,
     }
 
     /* If we are dealing with ciphertext we need to allow for the overhead */
-    max_early_data += (uint32_t)overhead;
+    max_early_data += overhead;
 
     if (s->early_data_count + length > max_early_data) {
         SSLfatal(s, send ? SSL_AD_INTERNAL_ERROR : SSL_AD_UNEXPECTED_MESSAGE,
@@ -529,13 +529,18 @@ int ossl_tls_handle_rlayer_return(SSL_CONNECTION *s, int writing, int ret,
                 ERR_new();
                 ERR_set_debug(file, line, 0);
                 ossl_statem_fatal(s, al, SSL_R_RECORD_LAYER_FAILURE, NULL);
+            } else {
+                /*
+                 * Some failure but there is no alert code. We don't log an
+                 * error for this. The record layer should have logged an error
+                 * already or, if not, its due to some sys call error which will be
+                 * reported via SSL_ERROR_SYSCALL and errno. We do still set the
+                 * state machine into an error state via ossl_statem_send_fatal().
+                 * This doesn't actually send an alert because we are using
+                 * SSL_AD_NO_ALERT.
+                 */
+                ossl_statem_send_fatal(s, SSL_AD_NO_ALERT);
             }
-            /*
-             * else some failure but there is no alert code. We don't log an
-             * error for this. The record layer should have logged an error
-             * already or, if not, its due to some sys call error which will be
-             * reported via SSL_ERROR_SYSCALL and errno.
-             */
         }
         /*
          * The record layer distinguishes the cases of EOF, non-fatal
@@ -829,20 +834,6 @@ start:
      * were actually expecting a CCS).
      */
 
-    /*
-     * Lets just double check that we've not got an SSLv2 record
-     */
-    if (rr->version == SSL2_VERSION) {
-        /*
-         * Should never happen. ssl3_get_record() should only give us an SSLv2
-         * record back if this is the first packet and we are looking for an
-         * initial ClientHello. Therefore |type| should always be equal to
-         * |rr->type|. If not then something has gone horribly wrong
-         */
-        SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
-        return -1;
-    }
-
     if (ssl->method->version == TLS_ANY_VERSION
         && (s->server || rr->type != SSL3_RT_ALERT)) {
         /*
@@ -851,7 +842,14 @@ start:
          * with. We shouldn't be receiving anything other than a ClientHello
          * if we are a server.
          */
-        s->version = rr->version;
+        int min_version, max_version;
+
+        if (ssl_get_min_max_version(s, &min_version, &max_version, NULL) != 0) {
+            SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE, ERR_R_INTERNAL_ERROR);
+            return -1;
+        }
+
+        s->version = min_version;
         SSLfatal(s, SSL_AD_UNEXPECTED_MESSAGE, SSL_R_UNEXPECTED_MESSAGE);
         return -1;
     }
@@ -1122,17 +1120,6 @@ start:
     }
 }
 
-/*
- * Returns true if the current rrec was sent in SSLv2 backwards compatible
- * format and false otherwise.
- */
-int RECORD_LAYER_is_sslv2_record(RECORD_LAYER *rl)
-{
-    if (SSL_CONNECTION_IS_DTLS(rl->s))
-        return 0;
-    return rl->tlsrecs[0].version == SSL2_VERSION;
-}
-
 static OSSL_FUNC_rlayer_msg_callback_fn rlayer_msg_callback_wrapper;
 static void rlayer_msg_callback_wrapper(int write_p, int version,
     int content_type, const void *buf,
@@ -1264,6 +1251,31 @@ int ssl_set_new_record_layer(SSL_CONNECTION *s, int version,
     int use_early_data = 0;
     uint32_t max_early_data;
     COMP_METHOD *compm = (comp == NULL) ? NULL : comp->method;
+
+    if (direction == OSSL_RECORD_DIRECTION_READ) {
+        if (SSL_CONNECTION_IS_DTLS(s)) {
+            if (s->rlayer.curr_rec < s->rlayer.num_recs) {
+                /*
+                 * We are trying to move to the next epoch, but we've still got
+                 * trailing record data to process. This should not happen in
+                 * normal circumstances. The CCS must have arrived early, but
+                 * this remaining record data is unexpected.
+                 */
+                SSLfatal(s, SSL_AD_UNEXPECTED_MESSAGE, SSL_R_UNEXPECTED_MESSAGE);
+                return 0;
+            }
+        } else {
+            if (!ossl_assert(s->rlayer.curr_rec == s->rlayer.num_recs)) {
+                /*
+                 * How can this happen? We're trying to change to the next
+                 * record layer - but that should only happen on a record
+                 * boundary. We should never be able to get here.
+                 */
+                SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+                return 0;
+            }
+        }
+    }
 
     meth = ssl_select_next_record_layer(s, direction, level);
 
@@ -1423,7 +1435,7 @@ int ssl_set_new_record_layer(SSL_CONNECTION *s, int version,
             secret, secretlen, key, keylen, iv,
             ivlen, mackey, mackeylen, ciph, taglen,
             mactype, md, compm, kdfdigest, prev,
-            thisbio, next, NULL, NULL, settings,
+            thisbio, next, settings,
             options, rlayer_dispatch_tmp, s,
             s->rlayer.rlarg, &newrl);
         BIO_free(prev);

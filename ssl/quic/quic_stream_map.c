@@ -67,8 +67,6 @@ static QUIC_STREAM *list_next(QUIC_STREAM_LIST_NODE *l, QUIC_STREAM_LIST_NODE *n
     offsetof(QUIC_STREAM, active_node))
 #define accept_next(l, s) list_next((l), &(s)->accept_node, \
     offsetof(QUIC_STREAM, accept_node))
-#define ready_for_gc_next(l, s) list_next((l), &(s)->ready_for_gc_node, \
-    offsetof(QUIC_STREAM, ready_for_gc_node))
 #define accept_head(l) list_next((l), (l), \
     offsetof(QUIC_STREAM, accept_node))
 #define ready_for_gc_head(l) list_next((l), (l), \
@@ -96,6 +94,8 @@ int ossl_quic_stream_map_init(QUIC_STREAM_MAP *qsm,
     QUIC_CHANNEL *ch)
 {
     qsm->map = lh_QUIC_STREAM_new(hash_stream, cmp_stream);
+    if (qsm->map == NULL)
+        return 0;
     qsm->active_list.prev = qsm->active_list.next = &qsm->active_list;
     qsm->accept_list.prev = qsm->accept_list.next = &qsm->accept_list;
     qsm->ready_for_gc_list.prev = qsm->ready_for_gc_list.next
@@ -125,6 +125,9 @@ static void release_each(QUIC_STREAM *stream, void *arg)
 
 void ossl_quic_stream_map_cleanup(QUIC_STREAM_MAP *qsm)
 {
+    if (qsm->map == NULL)
+        return;
+    lh_QUIC_STREAM_set_down_load(qsm->map, 0);
     ossl_quic_stream_map_visit(qsm, release_each, qsm);
 
     lh_QUIC_STREAM_free(qsm->map);
@@ -170,6 +173,10 @@ QUIC_STREAM *ossl_quic_stream_map_alloc(QUIC_STREAM_MAP *qsm,
     s->send_final_size = UINT64_MAX;
 
     lh_QUIC_STREAM_insert(qsm->map, s);
+    if (lh_QUIC_STREAM_error(qsm->map)) {
+        OPENSSL_free(s);
+        return NULL;
+    }
     return s;
 }
 
@@ -447,6 +454,13 @@ int ossl_quic_stream_map_notify_totally_acked(QUIC_STREAM_MAP *qsm,
 
     case QUIC_SSTREAM_STATE_DATA_SENT:
         qs->send_state = QUIC_SSTREAM_STATE_DATA_RECVD;
+        /*
+         * Remember final size in case  SSL_get_stream_write_state()
+         * gets called.
+         */
+        qs->have_final_size = ossl_quic_sstream_get_final_size(qs->sstream,
+            NULL);
+
         /* We no longer need a QUIC_SSTREAM in this state. */
         ossl_quic_sstream_free(qs->sstream);
         qs->sstream = NULL;
@@ -806,13 +820,9 @@ size_t ossl_quic_stream_map_get_total_accept_queue_len(QUIC_STREAM_MAP *qsm)
 
 void ossl_quic_stream_map_gc(QUIC_STREAM_MAP *qsm)
 {
-    QUIC_STREAM *qs, *qs_head, *qsn = NULL;
+    QUIC_STREAM *qs;
 
-    for (qs = qs_head = ready_for_gc_head(&qsm->ready_for_gc_list);
-        qs != NULL && qs != qs_head;
-        qs = qsn) {
-        qsn = ready_for_gc_next(&qsm->ready_for_gc_list, qs);
-
+    while ((qs = ready_for_gc_head(&qsm->ready_for_gc_list)) != NULL) {
         ossl_quic_stream_map_release(qsm, qs);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -22,10 +22,12 @@
 #include "crypto/dh.h"
 #include "dh_local.h"
 
+#include <crypto/asn1.h>
+
 /*
  * The intention with the "backend" source file is to offer backend functions
- * for legacy backends (EVP_PKEY_ASN1_METHOD and EVP_PKEY_METHOD) and provider
- * implementations alike.
+ * for legacy backends (EVP_PKEY_ASN1_METHOD) and provider implementations
+ * alike.
  */
 
 static int dh_ffc_params_fromdata(DH *dh, const OSSL_PARAM params[])
@@ -233,7 +235,7 @@ DH *ossl_dh_key_from_pkcs8(const PKCS8_PRIV_KEY_INFO *p8inf,
     goto done;
 
 decerr:
-    ERR_raise(ERR_LIB_DH, EVP_R_DECODE_ERROR);
+    ERR_raise(ERR_LIB_DH, DH_R_DECODE_ERROR);
 dherr:
     DH_free(dh);
     dh = NULL;
